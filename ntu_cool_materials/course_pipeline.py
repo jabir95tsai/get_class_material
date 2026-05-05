@@ -269,10 +269,15 @@ def download_files(plan: CoursePlan, client: CanvasSessionClient) -> StageStats:
                 _download_canvas_file(file_id, target, headers)
                 stats.done += 1
             except urllib.error.HTTPError as exc:
-                if exc.code in {401, 403}:
-                    raise SessionExpiredError(f"got HTTP {exc.code} downloading {target.name}") from exc
-                print(f"      ✗ failed: {exc}")
-                stats.failed.append(f"{week.label}/{target.name}: HTTP {exc.code}")
+                # 401 = your session is bad → bubble up so we can re-auth and retry.
+                # 403 = your session is fine but this specific file isn't accessible
+                # to you (locked-for-user, restricted to a section, etc.) → skip and
+                # continue with the rest.
+                if exc.code == 401:
+                    raise SessionExpiredError(f"got HTTP 401 downloading {target.name}") from exc
+                reason = "no permission" if exc.code == 403 else f"HTTP {exc.code}"
+                print(f"      ✗ skipped: {reason}")
+                stats.failed.append(f"{week.label}/{target.name}: {reason}")
             except Exception as exc:
                 print(f"      ✗ failed: {exc}")
                 stats.failed.append(f"{week.label}/{target.name}: {type(exc).__name__}: {exc}")
@@ -305,10 +310,11 @@ def save_pages(plan: CoursePlan, client: CanvasSessionClient, course_id: str) ->
                 with urllib.request.urlopen(req, timeout=60) as resp:
                     page = json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
-                if exc.code in {401, 403}:
-                    raise SessionExpiredError(f"got HTTP {exc.code} fetching page {target_md.name}") from exc
-                print(f"      ✗ failed: {exc}")
-                stats.failed.append(f"{week.label}/{target_md.name}: HTTP {exc.code}")
+                if exc.code == 401:
+                    raise SessionExpiredError(f"got HTTP 401 fetching page {target_md.name}") from exc
+                reason = "no permission" if exc.code == 403 else f"HTTP {exc.code}"
+                print(f"      ✗ skipped: {reason}")
+                stats.failed.append(f"{week.label}/{target_md.name}: {reason}")
                 continue
             except Exception as exc:
                 print(f"      ✗ failed: {exc}")
