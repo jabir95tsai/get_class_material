@@ -327,61 +327,70 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         print("No courses returned. Try --refresh-session, or --state to widen the filter.")
         return 0
 
-    print(f"\nFound {len(courses)} course(s):\n")
-    for i, c in enumerate(courses, 1):
-        name = c.get("name") or c.get("course_code") or str(c.get("id"))
-        code = c.get("course_code")
-        suffix = f"  [{code}]" if code and code != name else ""
-        print(f"  {i}) {name}{suffix}")
+    def _print_course_list() -> None:
+        print(f"\nFound {len(courses)} course(s):\n")
+        for i, c in enumerate(courses, 1):
+            name = c.get("name") or c.get("course_code") or str(c.get("id"))
+            code = c.get("course_code")
+            suffix = f"  [{code}]" if code and code != name else ""
+            print(f"  {i}) {name}{suffix}")
 
-    while True:
-        try:
-            raw = input(f"\nPick a course (1-{len(courses)}, or q to quit): ").strip()
-        except (EOFError, KeyboardInterrupt):
-            if browser is not None:
-                browser.close()
-            print("\naborted.")
-            return 0
-        if raw.lower() in {"q", "quit", "exit", ""}:
-            if browser is not None:
-                browser.close()
-            print("aborted.")
-            return 0
-        try:
-            idx = int(raw) - 1
-            if idx < 0:
-                raise IndexError
-            chosen = courses[idx]
-            break
-        except (ValueError, IndexError):
-            print(f"Invalid choice: {raw!r}. Enter a number 1-{len(courses)}.")
+    _print_course_list()
 
-    course_id = str(chosen["id"])
-    print(f"\n→ {chosen.get('name')!r} (id {course_id})\n")
     try:
-        download_course(
-            course_id=course_id,
-            output_dir=Path(args.out),
-            base_url=base_url,
-            headers_path=headers_path,
-            refresh_session=False,
-            client=client,
-            browser=browser,
-            yt_cookies=Path(args.youtube_cookies),
-            yt_dlp=args.yt_dlp,
-            profile_dir=Path(args.profile_dir),
-            skip_pdfs=args.skip_pdfs,
-            skip_pages=args.skip_pages,
-            skip_youtube=args.skip_youtube,
-            skip_cool_videos=args.skip_cool_videos,
-        )
-    except RuntimeError as exc:
-        print(f"download-course aborted: {exc}")
-        return 1
+        first_iteration = True
+        while True:
+            prompt = (
+                f"\nPick a course (1-{len(courses)}, or q to quit): "
+                if first_iteration else
+                f"\nPick another course (1-{len(courses)}, l to re-list, or q to quit): "
+            )
+            try:
+                raw = input(prompt).strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\naborted.")
+                return 0
+            if raw.lower() in {"q", "quit", "exit", ""}:
+                print("Bye.")
+                return 0
+            if raw.lower() in {"l", "list", "ls"}:
+                _print_course_list()
+                continue
+            try:
+                idx = int(raw) - 1
+                if idx < 0:
+                    raise IndexError
+                chosen = courses[idx]
+            except (ValueError, IndexError):
+                print(f"Invalid choice: {raw!r}. Enter a number 1-{len(courses)}.")
+                continue
+
+            course_id = str(chosen["id"])
+            print(f"\n→ {chosen.get('name')!r} (id {course_id})\n")
+            try:
+                download_course(
+                    course_id=course_id,
+                    output_dir=Path(args.out),
+                    base_url=base_url,
+                    headers_path=headers_path,
+                    refresh_session=False,
+                    client=client,
+                    browser=browser,
+                    yt_cookies=Path(args.youtube_cookies),
+                    yt_dlp=args.yt_dlp,
+                    profile_dir=Path(args.profile_dir),
+                    skip_pdfs=args.skip_pdfs,
+                    skip_pages=args.skip_pages,
+                    skip_youtube=args.skip_youtube,
+                    skip_cool_videos=args.skip_cool_videos,
+                )
+            except RuntimeError as exc:
+                print(f"download-course failed: {exc}")
+                # Don't bail on the loop — let the user try another course.
+            first_iteration = False
     finally:
         if browser is not None:
             browser.close()
-    return 0
 
 
 def pick_main(argv: list[str] | None = None) -> int:
