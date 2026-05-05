@@ -10,14 +10,34 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
+authors = [{ name = "jabir", email = "jabir95tsai@gmail.com" }]
+keywords = ["ntu", "ntu-cool", "canvas", "canvas-lms", "course-downloader", "education", "taiwan"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Education",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Multimedia :: Video",
+]
 dependencies = [
     "requests>=2.31",
     "yt-dlp>=2024.1.1",
     "playwright>=1.45",
 ]
 
+[project.urls]
+Homepage = "https://github.com/jabir95tsai/get_class_material"
+Repository = "https://github.com/jabir95tsai/get_class_material"
+Issues = "https://github.com/jabir95tsai/get_class_material/issues"
+
 [project.optional-dependencies]
-dev = []
+dev = ["build", "twine"]
 
 [project.scripts]
 ntu-cool-materials = "ntu_cool_materials.cli:main"

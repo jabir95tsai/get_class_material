@@ -14,6 +14,7 @@ from .course_pipeline import (
     download_course,
     open_browser_session,
 )
+from .doctor import run_doctor
 from .session_client import CanvasSessionClient, read_headers_file
 from .storage import ManifestStore
 from .sync import SyncStats, sync_course_materials
@@ -65,6 +66,11 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_download_course(base_url, args)
         if args.command == "pick":
             return _cmd_pick(base_url, args)
+        if args.command == "doctor":
+            return run_doctor(
+                headers_path=Path(args.headers_file),
+                youtube_cookies_path=Path(args.youtube_cookies),
+            )
     except CanvasAPIError as exc:
         print(f"Canvas API error: {exc}")
         return 1
@@ -140,6 +146,13 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Refresh session without showing a browser window.",
     )
+
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Check that everything (Python, yt-dlp, node, ffmpeg, Chromium, cookies) is ready to go.",
+    )
+    doctor.add_argument("--headers-file", default=".secrets/ntu_cool_headers.txt")
+    doctor.add_argument("--youtube-cookies", default=".secrets/youtube_cookies.txt")
 
     pick = subparsers.add_parser(
         "pick",
