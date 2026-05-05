@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -175,6 +177,10 @@ def _build_parser() -> argparse.ArgumentParser:
     pick.add_argument("--skip-pages", action="store_true")
     pick.add_argument("--skip-youtube", action="store_true")
     pick.add_argument("--skip-cool-videos", action="store_true")
+    pick.add_argument(
+        "--keep-terminal", action="store_true",
+        help="Don't close the PowerShell window on quit (Windows only).",
+    )
 
     course = subparsers.add_parser(
         "download-course",
@@ -277,6 +283,31 @@ def _cmd_sync(client: CanvasClient, args: argparse.Namespace) -> int:
     return 1 if any(item.failed for item in stats) else 0
 
 
+def _close_parent_terminal_on_quit() -> None:
+    """On Windows, close the surrounding PowerShell/cmd/Windows Terminal window
+    when the user explicitly quits the picker. Skipped if stdin isn't a tty
+    (e.g. running under tests or piped input) or if --keep-terminal was passed.
+
+    Implementation: spawn a detached `taskkill` that fires after a short delay,
+    so this Python process gets to exit cleanly first. The taskkill kills the
+    *parent* process (the shell), which in turn closes its window.
+    """
+    if os.name != "nt":
+        return
+    if not sys.stdin.isatty():
+        return  # piped/redirected — caller probably wants to keep their shell
+    try:
+        # Detached so it survives our own exit; small sleep so we exit first.
+        DETACHED_PROCESS = 0x00000008
+        subprocess.Popen(
+            ["cmd", "/c", f"timeout /t 1 /nobreak >nul && taskkill /F /PID {os.getppid()}"],
+            creationflags=DETACHED_PROCESS,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass  # best-effort; user's shell stays open
+
+
 def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     """Interactive course picker → download_course.
 
@@ -377,9 +408,13 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                 raw = input(prompt).strip()
             except (EOFError, KeyboardInterrupt):
                 print("\naborted.")
+                if not args.keep_terminal:
+                    _close_parent_terminal_on_quit()
                 return 0
             if raw.lower() in {"q", "quit", "exit", ""}:
                 print("Bye.")
+                if not args.keep_terminal:
+                    _close_parent_terminal_on_quit()
                 return 0
             if raw.lower() in {"l", "list", "ls"}:
                 _print_course_list()
