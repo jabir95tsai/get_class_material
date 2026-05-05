@@ -335,16 +335,44 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             suffix = f"  [{code}]" if code and code != name else ""
             print(f"  {i}) {name}{suffix}")
 
+    def _run_download(course: dict[str, Any]) -> None:
+        course_id = str(course["id"])
+        print(f"\n→ {course.get('name')!r} (id {course_id})\n")
+        try:
+            download_course(
+                course_id=course_id,
+                output_dir=Path(args.out),
+                base_url=base_url,
+                headers_path=headers_path,
+                refresh_session=False,
+                client=client,
+                browser=browser,
+                yt_cookies=Path(args.youtube_cookies),
+                yt_dlp=args.yt_dlp,
+                profile_dir=Path(args.profile_dir),
+                skip_pdfs=args.skip_pdfs,
+                skip_pages=args.skip_pages,
+                skip_youtube=args.skip_youtube,
+                skip_cool_videos=args.skip_cool_videos,
+            )
+        except RuntimeError as exc:
+            print(f"download-course failed: {exc}")
+            # Don't bail on the loop — let the user try another course.
+
     _print_course_list()
+
+    n = len(courses)
+    options_for_first = (
+        f"輸入課程編號 1-{n} 開始下載 / a = 下載全部 / q = 離開"
+    )
+    options_for_next = (
+        f"下一個動作: 1-{n} 下載另一門 / a = 下載全部 / l = 重新列出 / q = 離開"
+    )
 
     try:
         first_iteration = True
         while True:
-            prompt = (
-                f"\nPick a course (1-{len(courses)}, or q to quit): "
-                if first_iteration else
-                f"\nPick another course (1-{len(courses)}, l to re-list, or q to quit): "
-            )
+            prompt = f"\n{options_for_first if first_iteration else options_for_next}\n> "
             try:
                 raw = input(prompt).strip()
             except (EOFError, KeyboardInterrupt):
@@ -356,37 +384,22 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             if raw.lower() in {"l", "list", "ls"}:
                 _print_course_list()
                 continue
+            if raw.lower() in {"a", "all"}:
+                print(f"\n→ Downloading all {n} courses sequentially...")
+                for i, course in enumerate(courses, 1):
+                    print(f"\n=========== [{i}/{n}] ===========")
+                    _run_download(course)
+                first_iteration = False
+                continue
             try:
                 idx = int(raw) - 1
                 if idx < 0:
                     raise IndexError
                 chosen = courses[idx]
             except (ValueError, IndexError):
-                print(f"Invalid choice: {raw!r}. Enter a number 1-{len(courses)}.")
+                print(f"Invalid choice: {raw!r}. Enter 1-{n}, 'a', 'l', or 'q'.")
                 continue
-
-            course_id = str(chosen["id"])
-            print(f"\n→ {chosen.get('name')!r} (id {course_id})\n")
-            try:
-                download_course(
-                    course_id=course_id,
-                    output_dir=Path(args.out),
-                    base_url=base_url,
-                    headers_path=headers_path,
-                    refresh_session=False,
-                    client=client,
-                    browser=browser,
-                    yt_cookies=Path(args.youtube_cookies),
-                    yt_dlp=args.yt_dlp,
-                    profile_dir=Path(args.profile_dir),
-                    skip_pdfs=args.skip_pdfs,
-                    skip_pages=args.skip_pages,
-                    skip_youtube=args.skip_youtube,
-                    skip_cool_videos=args.skip_cool_videos,
-                )
-            except RuntimeError as exc:
-                print(f"download-course failed: {exc}")
-                # Don't bail on the loop — let the user try another course.
+            _run_download(chosen)
             first_iteration = False
     finally:
         if browser is not None:
