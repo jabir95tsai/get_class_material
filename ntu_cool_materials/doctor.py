@@ -60,25 +60,27 @@ def check_python() -> CheckResult:
 def check_yt_dlp() -> CheckResult:
     if shutil.which("yt-dlp") is None:
         return CheckResult(
-            name="yt-dlp",
+            name="yt-dlp (video downloader)",
             ok=False,
-            detail="not on PATH",
-            fix="pip install --upgrade yt-dlp",
+            optional=True,
+            detail="not installed",
+            fix="pip install ntu-cool-material[videos]",
         )
     code, line = _run(["yt-dlp", "--version"])
     return CheckResult(
-        name="yt-dlp",
+        name="yt-dlp (video downloader)",
         ok=code == 0,
+        optional=True,
         detail=line if code == 0 else "failed to run --version",
-        fix="pip install --upgrade yt-dlp",
     )
 
 
 def check_node() -> CheckResult:
     if shutil.which("node") is None:
         return CheckResult(
-            name="Node.js",
+            name="Node.js (only needed for video downloads)",
             ok=False,
+            optional=True,
             detail="not on PATH (yt-dlp needs it to solve YouTube's JS challenge — without it, "
                    "videos are stuck at 360p or fail outright)",
             fix=_platform_install_hint(
@@ -88,14 +90,15 @@ def check_node() -> CheckResult:
             ),
         )
     code, line = _run(["node", "--version"])
-    return CheckResult(name="Node.js", ok=code == 0, detail=line if code == 0 else "")
+    return CheckResult(name="Node.js (only needed for video downloads)", ok=code == 0, optional=True, detail=line if code == 0 else "")
 
 
 def check_ffmpeg() -> CheckResult:
     if shutil.which("ffmpeg") is None:
         return CheckResult(
-            name="ffmpeg",
+            name="ffmpeg (only needed for video downloads)",
             ok=False,
+            optional=True,
             detail="not on PATH (used to merge YouTube video+audio streams)",
             fix=_platform_install_hint(
                 mac="brew install ffmpeg",
@@ -105,7 +108,7 @@ def check_ffmpeg() -> CheckResult:
         )
     code, line = _run(["ffmpeg", "-version"])
     return CheckResult(
-        name="ffmpeg", ok=code == 0,
+        name="ffmpeg (only needed for video downloads)", ok=code == 0, optional=True,
         detail=line.split(" Copyright")[0] if line else "",
     )
 
@@ -206,12 +209,12 @@ def run_doctor(
 
     required = [
         check_python(),
-        check_yt_dlp(),
-        check_node(),
-        check_ffmpeg(),
         check_playwright_chromium(),
     ]
     optional = [
+        check_yt_dlp(),
+        check_node(),
+        check_ffmpeg(),
         check_ntu_session(headers_path),
         check_youtube_cookies(youtube_cookies_path),
     ]

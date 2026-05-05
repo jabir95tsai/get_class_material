@@ -548,6 +548,16 @@ def _build_session_client_from_file(headers_path: Path, base_url: str) -> Canvas
     return CanvasSessionClient(base_url=base_url, headers=read_headers_file(headers_path))
 
 
+def videos_extra_installed() -> bool:
+    """True iff the [videos] extra is installed (yt-dlp importable).
+    Used to decide whether YouTube + cool-video stages are enabled by default."""
+    try:
+        import yt_dlp  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def download_course(
     *, course_id: str, output_dir: Path,
     base_url: str = f"https://{CANVAS_NETLOC}",
@@ -587,6 +597,13 @@ def download_course(
         print(f"Course: {plan.course.get('name')!r}")
         print(f"Output: {plan.course_dir}")
         print(f"Weeks with content: {[w.label for w in plan.weeks]}")
+
+        # If [videos] extra wasn't installed, auto-skip the video stages with a hint.
+        videos_available = videos_extra_installed()
+        if not videos_available and not (skip_youtube and skip_cool_videos):
+            print("\n(只下載 PDF + Page。若要下載影片，先 pip install ntu-cool-material[videos])")
+            skip_youtube = True
+            skip_cool_videos = True
 
         if not skip_pdfs:
             print("\n[1/4] PDFs / Files")
