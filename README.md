@@ -88,7 +88,7 @@ ffmpeg -version
 Not on PyPI yet — clone and install:
 
 ```powershell
-git clone https://github.com/<your-fork>/get_class_material.git
+git clone https://github.com/jabir95tsai/get_class_material.git
 cd get_class_material
 pip install -e .
 
