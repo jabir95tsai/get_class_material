@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ntu-cool-materials"
+version = "0.1.0"
+description = "One-command bulk downloader for NTU COOL (Canvas) course materials — PDFs, lecture videos, and Pages."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "yt-dlp>=2024.1.1",
+    "playwright>=1.45",
+]
+
+[project.optional-dependencies]
+dev = []
+
+[project.scripts]
+ntu-cool-materials = "ntu_cool_materials.cli:main"
+ntu-cool-gcm = "ntu_cool_materials.cli:pick_main"
+ntu-cool-video = "ntu_cool_materials.cool_video:main"
+ntu-cool-session = "ntu_cool_materials.browser_session:main"
+youtube-cookies = "ntu_cool_materials.youtube_cookies:main"
+
+[tool.setuptools.packages.find]
+include = ["ntu_cool_materials*"]
