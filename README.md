@@ -83,18 +83,27 @@ ffmpeg -version
 
 ### Step 4 — 裝本工具
 
-目前還沒上 PyPI，從 GitHub clone 下來裝：
+```powershell
+pip install ntu-cool-material
 
-Not on PyPI yet — clone and install:
+# 第一次裝 Playwright 用的 Chromium
+python -m playwright install chromium
+```
+
+裝好之後跑 `ntu-cool-materials doctor` 檢查所有東西都到位（Python / yt-dlp / Node / ffmpeg / Chromium）。
+
+After install, run `ntu-cool-materials doctor` to verify every dependency is in place before the first download.
+
+<details>
+<summary>從原始碼安裝 / Install from source (for development)</summary>
 
 ```powershell
 git clone https://github.com/jabir95tsai/get_class_material.git
 cd get_class_material
 pip install -e .
-
-# 第一次裝 Playwright 用的 Chromium
 python -m playwright install chromium
 ```
+</details>
 
 ---
 

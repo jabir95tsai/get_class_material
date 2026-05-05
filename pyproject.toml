@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ntu-cool-materials"
+name = "ntu-cool-material"
 version = "0.1.0"
 description = "One-command bulk downloader for NTU COOL (Canvas) course materials — PDFs, lecture videos, and Pages."
 readme = "README.md"
