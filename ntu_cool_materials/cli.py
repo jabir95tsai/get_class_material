@@ -14,7 +14,7 @@ from .course_pipeline import (
     download_course,
     open_browser_session,
 )
-from .doctor import run_doctor
+from .doctor import ensure_ready, run_doctor
 from .session_client import CanvasSessionClient, read_headers_file
 from .storage import ManifestStore
 from .sync import SyncStats, sync_course_materials
@@ -70,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
             return run_doctor(
                 headers_path=Path(args.headers_file),
                 youtube_cookies_path=Path(args.youtube_cookies),
+                fix=args.fix,
             )
     except CanvasAPIError as exc:
         print(f"Canvas API error: {exc}")
@@ -153,6 +154,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument("--headers-file", default=".secrets/ntu_cool_headers.txt")
     doctor.add_argument("--youtube-cookies", default=".secrets/youtube_cookies.txt")
+    doctor.add_argument("--fix", action="store_true",
+                        help="Try to auto-install missing pieces (pip, Chromium, winget/brew).")
 
     pick = subparsers.add_parser(
         "pick",
@@ -275,8 +278,16 @@ def _cmd_sync(client: CanvasClient, args: argparse.Namespace) -> int:
 
 
 def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
-    """Interactive course picker → download_course."""
+    """Interactive course picker → download_course.
+
+    First-run hook: silently checks Python/Playwright/yt-dlp/Chromium and
+    auto-installs whatever is missing so the user can run `ntu-cool-gcm`
+    immediately after `pip install ntu-cool-material` without other steps.
+    """
     headers_path = Path(args.headers_file)
+    youtube_cookies = Path(args.youtube_cookies)
+    if not ensure_ready(headers_path=headers_path, youtube_cookies_path=youtube_cookies):
+        return 1
     browser: BrowserSession | None = None
     if args.refresh_session or not headers_path.exists():
         if not headers_path.exists() and not args.refresh_session:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ntu-cool-material"
-version = "0.1.1"
+version = "0.1.2"
 description = "One-command bulk downloader for NTU COOL (Canvas) course materials — PDFs, lecture videos, and Pages."
 readme = "README.md"
 license = "MIT"
@@ -28,6 +28,7 @@ classifiers = [
 dependencies = [
     "requests>=2.31",
     "playwright>=1.45",
+    "yt-dlp>=2024.1.1",
 ]
 
 [project.urls]
@@ -36,7 +37,6 @@ Repository = "https://github.com/jabir95tsai/get_class_material"
 Issues = "https://github.com/jabir95tsai/get_class_material/issues"
 
 [project.optional-dependencies]
-videos = ["yt-dlp>=2024.1.1"]
 dev = ["build", "twine"]
 
 [project.scripts]

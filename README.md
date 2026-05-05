@@ -1,6 +1,6 @@
 # NTU COOL Materials
 
-一行指令把 NTU COOL 課程的 PDF 跟 Page 全部抓回本機，幫你整理好餵給 AI 複習。
+一行指令把 NTU COOL 課程的講義、Page、上課影片全部抓回本機，幫你整理好餵給 AI 複習。
 
 ```powershell
 ntu-cool-gcm
@@ -18,94 +18,72 @@ Found 5 course(s):
 Pick a course (1-5, or q to quit): 3
 ```
 
-選號碼，程式自己登入 NTU COOL，把該課程所有週次的 **PDF** 跟 **Page** 抓下來放到資料夾。檔名都用人看得懂的中文。
+選號碼，程式自己登入 NTU COOL，把該課程所有週次的 **PDF**、**Page**、**YouTube**、**上課影片**全部抓下來。檔名都用人看得懂的中文。
 
 ---
 
-## 安裝
+## 安裝（只要一行）
 
-### 1. 先裝 Python（3.11 或更新）
-
-到 <https://www.python.org/downloads/> 下載安裝。安裝時記得勾 **「Add Python to PATH」**。
-
-### 2. 裝這個工具
+先確認你有 **Python 3.11 以上**（沒有就到 <https://www.python.org/downloads/> 裝，安裝時記得勾「Add Python to PATH」），然後：
 
 ```powershell
 pip install ntu-cool-material
-python -m playwright install chromium
 ```
 
-第二行是裝登入用的瀏覽器（一次就好）。
-
-### 3. 確認都裝好了
-
-```powershell
-ntu-cool-materials doctor
-```
-
-看到 `✓ All set` 就可以開始用。
+就這樣。
 
 ---
 
-## 使用方式
-
-### 第一次：登入 NTU COOL
+## 第一次使用
 
 ```powershell
-ntu-cool-gcm --refresh-session
+ntu-cool-gcm
 ```
 
-會跳出一個瀏覽器視窗，**用學號密碼登入**。登入完不要關視窗，程式會自己抓 cookie 然後繼續。
+第一次跑會自動幫你：
 
-選課程後等程式跑完，會告訴你檔案放哪：
+1. 偵測缺哪些東西（Chromium 瀏覽器、yt-dlp 等）
+2. **自動下載安裝**少的部分
+3. 跳出瀏覽器視窗讓你登入 NTU COOL（學號密碼）
+4. 列出你的課程讓你選
+5. 開始下載
+
+> 如果還缺 Node.js 或 ffmpeg（下載 YouTube 影片用），程式會在 Windows 上嘗試用 `winget` 自動裝，Mac 上用 `brew`。如果都沒有就會顯示要你自己跑的指令。
+
+跑完會告訴你檔案放哪：
 
 ```text
 Done. Files saved to:
   C:\Users\you\ntu-cool-gcm_material\音樂、演化與大腦 Music, Evolution and the Brain (57544)
 ```
 
-### 之後再跑
+---
+
+## 之後再跑
 
 ```powershell
 ntu-cool-gcm
 ```
 
-只要登入沒過期（一兩天內）就不用再 `--refresh-session`。
+只要登入沒過期（一兩天內）就不用任何額外動作。已經抓過的檔案會自動跳過，只補新的。
+
+如果登入過期了：
+
+```powershell
+ntu-cool-gcm --refresh-session
+```
 
 ---
 
-## 想下載影片？
+## YouTube cookie（不公開影片需要）
 
-預設**不抓影片**，因為 YouTube 影片要額外的工具，檔案也很大。如果要抓：
-
-### 1. 多裝兩個東西
-
-| 工具 | Windows | Mac |
-|------|---------|-----|
-| Node.js | `winget install OpenJS.NodeJS` | `brew install node` |
-| ffmpeg | `winget install Gyan.FFmpeg` | `brew install ffmpeg` |
-
-### 2. 多裝一個 Python 套件
-
-```powershell
-pip install ntu-cool-material[videos]
-```
-
-### 3. 設定 YouTube cookie（不公開影片需要）
+NTU 老師很多影片是 YouTube「不公開」，需要你的 Google 帳號才抓得到。第一次跑：
 
 ```powershell
 youtube-cookies
 ```
 
 跳出瀏覽器，登入你平常看 NTU COOL 影片的 Google 帳號，登入完關掉就好。
-
-### 4. 跑
-
-```powershell
-ntu-cool-gcm
-```
-
-這次會把 PDF、Page、YouTube 影片、NTU 上課影片全部抓下來。
 
 ---
 
@@ -125,7 +103,7 @@ ntu-cool-gcm_material/
 
 - **PDF** → 老師上傳的講義
 - **`.md`** → Page 類型的內容（VS Code、Typora、Obsidian 都能讀）
-- **`.mp4`** → 影片（裝了 `[videos]` 才會有）
+- **`.mp4`** → 影片（YouTube + NTU 上課影片）
 
 要換存檔位置：
 
@@ -143,12 +121,15 @@ ntu-cool-gcm --out D:\study
 **Q：跑到一半當機？**
 再跑一次就好，已經抓過的檔案不會重抓。
 
-**Q：登入過期了？**
+**Q：自動安裝失敗？**
+
 ```powershell
-ntu-cool-gcm --refresh-session
+ntu-cool-materials doctor --fix
 ```
 
-**Q：只想要某些東西？**
+doctor 會列出缺什麼，並再次嘗試自動修復。如果還是失敗，會印出該手動執行的指令給你複製貼上。
+
+**Q：只想下載某些東西？**
 
 ```powershell
 ntu-cool-gcm --skip-pdfs          # 不要 PDF
@@ -189,7 +170,7 @@ ntu-cool-materials download-course --course-id 57544
 ```powershell
 git clone https://github.com/jabir95tsai/get_class_material.git
 cd get_class_material
-pip install -e .[videos]
+pip install -e .
 python -m playwright install chromium
 python -m unittest discover -s tests
 ```
