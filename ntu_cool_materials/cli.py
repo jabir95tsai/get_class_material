@@ -284,28 +284,32 @@ def _cmd_sync(client: CanvasClient, args: argparse.Namespace) -> int:
 
 
 def _close_parent_terminal_on_quit() -> None:
-    """On Windows, close the surrounding PowerShell/cmd/Windows Terminal window
-    when the user explicitly quits the picker. Skipped if stdin isn't a tty
-    (e.g. running under tests or piped input) or if --keep-terminal was passed.
+    """On Windows, close the surrounding terminal window when the user quits.
 
-    Implementation: spawn a detached `taskkill` that fires after a short delay,
-    so this Python process gets to exit cleanly first. The taskkill kills the
-    *parent* process (the shell), which in turn closes its window.
+    Skipped when stdin isn't a tty (piped input / tests) so we never kill the
+    caller's shell unintentionally.
+
+    We can't just kill `os.getppid()` — pip's console-script entry point on
+    Windows is a tiny `ntu-cool-gcm.exe` wrapper that becomes Python's parent,
+    so killing it doesn't close the actual terminal window. Instead we ask the
+    Windows console window to close itself via WM_CLOSE; PowerShell/cmd/
+    Windows Terminal all honor this and shut down cleanly along with their
+    children (including us).
     """
     if os.name != "nt":
         return
     if not sys.stdin.isatty():
-        return  # piped/redirected — caller probably wants to keep their shell
+        return
     try:
-        # Detached so it survives our own exit; small sleep so we exit first.
-        DETACHED_PROCESS = 0x00000008
-        subprocess.Popen(
-            ["cmd", "/c", f"timeout /t 1 /nobreak >nul && taskkill /F /PID {os.getppid()}"],
-            creationflags=DETACHED_PROCESS,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+        hwnd = kernel32.GetConsoleWindow()
+        if hwnd:
+            WM_CLOSE = 0x0010
+            user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
     except Exception:
-        pass  # best-effort; user's shell stays open
+        pass
 
 
 def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
@@ -390,52 +394,64 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             print(f"download-course failed: {exc}")
             # Don't bail on the loop — let the user try another course.
 
-    _print_course_list()
-
     n = len(courses)
-    options_for_first = (
-        f"輸入課程編號 1-{n} 開始下載 / a = 下載全部 / q = 離開"
-    )
-    options_for_next = (
-        f"下一個動作: 1-{n} 下載另一門 / a = 下載全部 / l = 重新列出 / q = 離開"
-    )
 
-    try:
-        first_iteration = True
+    def _quit(message: str) -> int:
+        print(message)
+        if not args.keep_terminal:
+            _close_parent_terminal_on_quit()
+        return 0
+
+    def _ask_pick_number() -> dict[str, Any] | None:
+        """Re-show the course list and ask for a number. Returns the chosen course
+        dict, or None if the user backed out / EOF'd."""
+        _print_course_list()
         while True:
-            prompt = f"\n{options_for_first if first_iteration else options_for_next}\n> "
             try:
-                raw = input(prompt).strip()
+                raw = input(f"\n選擇課程 (1-{n}, q = 離開)\n> ").strip()
             except (EOFError, KeyboardInterrupt):
-                print("\naborted.")
-                if not args.keep_terminal:
-                    _close_parent_terminal_on_quit()
-                return 0
+                return None
             if raw.lower() in {"q", "quit", "exit", ""}:
-                print("Bye.")
-                if not args.keep_terminal:
-                    _close_parent_terminal_on_quit()
-                return 0
-            if raw.lower() in {"l", "list", "ls"}:
-                _print_course_list()
-                continue
-            if raw.lower() in {"a", "all"}:
-                print(f"\n→ Downloading all {n} courses sequentially...")
-                for i, course in enumerate(courses, 1):
-                    print(f"\n=========== [{i}/{n}] ===========")
-                    _run_download(course)
-                first_iteration = False
-                continue
+                return None
             try:
                 idx = int(raw) - 1
                 if idx < 0:
                     raise IndexError
-                chosen = courses[idx]
+                return courses[idx]
             except (ValueError, IndexError):
-                print(f"Invalid choice: {raw!r}. Enter 1-{n}, 'a', 'l', or 'q'.")
+                print(f"Invalid choice: {raw!r}. Enter 1-{n} or 'q'.")
+
+    try:
+        # First iteration: list + pick.
+        chosen = _ask_pick_number()
+        if chosen is None:
+            return _quit("Bye.")
+        _run_download(chosen)
+
+        # Subsequent iterations: small action menu, list shown only after 'continue'.
+        while True:
+            try:
+                raw = input(
+                    "\n下一個動作: continue = 繼續下載別的 / a = 下載全部 / q = 離開\n> "
+                ).strip()
+            except (EOFError, KeyboardInterrupt):
+                return _quit("\naborted.")
+            cmd = raw.lower()
+            if cmd in {"q", "quit", "exit", ""}:
+                return _quit("Bye.")
+            if cmd in {"a", "all"}:
+                print(f"\n→ Downloading all {n} courses sequentially...")
+                for i, course in enumerate(courses, 1):
+                    print(f"\n=========== [{i}/{n}] ===========")
+                    _run_download(course)
                 continue
-            _run_download(chosen)
-            first_iteration = False
+            if cmd in {"c", "continue"}:
+                chosen = _ask_pick_number()
+                if chosen is None:
+                    return _quit("Bye.")
+                _run_download(chosen)
+                continue
+            print(f"Invalid choice: {raw!r}. Enter 'continue', 'a', or 'q'.")
     finally:
         if browser is not None:
             browser.close()
