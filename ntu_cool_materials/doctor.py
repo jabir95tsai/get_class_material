@@ -64,13 +64,13 @@ def _has(cmd: str) -> bool:
 
 def _stream_subprocess(cmd: list[str], desc: str) -> bool:
     """Run a command, streaming output. Returns True on success."""
-    print(f"    → running: {' '.join(cmd)}")
+    print(f"    → 執行: {' '.join(cmd)}")
     try:
         result = subprocess.run(cmd)
         if result.returncode == 0:
-            print(f"    ✓ {desc} done.")
+            print(f"    ✓ {desc} 完成")
             return True
-        print(f"    ✗ {desc} failed (exit {result.returncode}).")
+        print(f"    ✗ {desc} 失敗 (exit {result.returncode})")
         return False
     except FileNotFoundError as exc:
         print(f"    ✗ {desc}: {exc}")
@@ -88,19 +88,19 @@ def _install_chromium() -> bool:
 
 def _install_winget(package: str) -> bool:
     if not _has("winget"):
-        print("    (winget not found — please install manually, see hint above)")
+        print("    (找不到 winget,請依照上方提示手動安裝)")
         return False
     return _stream_subprocess(
         ["winget", "install", "--accept-source-agreements", "--accept-package-agreements", "-e", "--id", package],
-        f"install {package} via winget",
+        f"用 winget 安裝 {package}",
     )
 
 
 def _install_brew(package: str) -> bool:
     if not _has("brew"):
-        print("    (Homebrew not found — please install manually, see hint above)")
+        print("    (找不到 Homebrew,請依照上方提示手動安裝)")
         return False
-    return _stream_subprocess(["brew", "install", package], f"install {package} via Homebrew")
+    return _stream_subprocess(["brew", "install", package], f"用 Homebrew 安裝 {package}")
 
 
 def _install_node_auto() -> bool:
@@ -126,10 +126,10 @@ def _install_ffmpeg_auto() -> bool:
 def check_python() -> CheckResult:
     v = sys.version_info
     return CheckResult(
-        name="Python 3.11+",
+        name="Python 3.11 以上",
         ok=(v.major, v.minor) >= (3, 11),
         detail=f"Python {v.major}.{v.minor}.{v.micro}",
-        fix_command="upgrade Python at https://www.python.org/downloads/",
+        fix_command="到 https://www.python.org/downloads/ 升級 Python",
     )
 
 
@@ -138,13 +138,13 @@ def check_playwright_chromium() -> CheckResult:
         from playwright.sync_api import sync_playwright
     except ImportError:
         return CheckResult(
-            name="Playwright (Python pkg)",
+            name="Playwright (Python 套件)",
             ok=False,
-            detail="not installed",
+            detail="未安裝",
             fix_command=f"{sys.executable} -m pip install --upgrade playwright",
             auto_install=lambda: _stream_subprocess(
                 [sys.executable, "-m", "pip", "install", "--upgrade", "playwright"],
-                "install playwright",
+                "安裝 playwright",
             ),
         )
     try:
@@ -154,7 +154,7 @@ def check_playwright_chromium() -> CheckResult:
         return CheckResult(
             name="Playwright Chromium",
             ok=ok,
-            detail=f"installed at {Path(executable).name}" if ok else "binary not installed",
+            detail=f"已安裝 ({Path(executable).name})" if ok else "瀏覽器尚未下載",
             fix_command=f"{sys.executable} -m playwright install chromium",
             auto_install=_install_chromium if not ok else None,
         )
@@ -162,7 +162,7 @@ def check_playwright_chromium() -> CheckResult:
         return CheckResult(
             name="Playwright Chromium",
             ok=False,
-            detail=f"probe failed: {exc}",
+            detail=f"偵測失敗: {exc}",
             fix_command=f"{sys.executable} -m playwright install chromium",
             auto_install=_install_chromium,
         )
@@ -175,11 +175,11 @@ def check_yt_dlp() -> CheckResult:
     return CheckResult(
         name="yt-dlp",
         ok=False,
-        detail="not on PATH",
+        detail="不在 PATH 上",
         fix_command=f"{sys.executable} -m pip install --upgrade yt-dlp",
         auto_install=lambda: _stream_subprocess(
             [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
-            "install yt-dlp",
+            "安裝 yt-dlp",
         ),
     )
 
@@ -187,15 +187,15 @@ def check_yt_dlp() -> CheckResult:
 def check_node() -> CheckResult:
     if _has("node"):
         code, line = _run(["node", "--version"])
-        return CheckResult(name="Node.js (for YouTube videos)", ok=code == 0, detail=line if code == 0 else "")
+        return CheckResult(name="Node.js (下載 YouTube 影片用)", ok=code == 0, detail=line if code == 0 else "")
     return CheckResult(
-        name="Node.js (for YouTube videos)",
+        name="Node.js (下載 YouTube 影片用)",
         ok=False,
         optional=True,
-        detail="not installed (without it YouTube videos cap at 360p or fail)",
+        detail="未安裝 (沒有它 YouTube 影片畫質會卡在 360p 或下載失敗)",
         fix_command=_platform_install_hint(
             mac="brew install node",
-            linux="install Node.js from your distro's package manager (https://nodejs.org/)",
+            linux="到 https://nodejs.org/ 找你的發行版的安裝方式",
             windows="winget install OpenJS.NodeJS",
         ),
         auto_install=_install_node_auto,
@@ -206,18 +206,18 @@ def check_ffmpeg() -> CheckResult:
     if _has("ffmpeg"):
         code, line = _run(["ffmpeg", "-version"])
         return CheckResult(
-            name="ffmpeg (for YouTube videos)",
+            name="ffmpeg (下載 YouTube 影片用)",
             ok=code == 0,
             detail=line.split(" Copyright")[0] if line else "",
         )
     return CheckResult(
-        name="ffmpeg (for YouTube videos)",
+        name="ffmpeg (下載 YouTube 影片用)",
         ok=False,
         optional=True,
-        detail="not installed (used to merge YouTube video+audio)",
+        detail="未安裝 (用來合併 YouTube 影音串流)",
         fix_command=_platform_install_hint(
             mac="brew install ffmpeg",
-            linux="apt install ffmpeg (or your distro's equivalent)",
+            linux="apt install ffmpeg (或你的發行版的對應指令)",
             windows="winget install Gyan.FFmpeg",
         ),
         auto_install=_install_ffmpeg_auto,
@@ -227,36 +227,36 @@ def check_ffmpeg() -> CheckResult:
 def check_ntu_session(headers_path: Path) -> CheckResult:
     if not headers_path.exists():
         return CheckResult(
-            name="NTU COOL session",
+            name="NTU COOL 登入憑證",
             ok=False,
             optional=True,
-            detail=f"no headers file at {headers_path}",
-            fix_command="ntu-cool-gcm --refresh-session  (will open browser to log in)",
+            detail=f"找不到 {headers_path}",
+            fix_command="ntu-cool-gcm --refresh-session (會開啟瀏覽器讓你登入)",
         )
     age_hr = (time.time() - headers_path.stat().st_mtime) / 3600
     age_label = (
-        f"{int(age_hr/24)} day(s) old" if age_hr >= 24 else
-        f"{int(age_hr)} hour(s) old" if age_hr >= 1 else "fresh"
+        f"{int(age_hr/24)} 天前" if age_hr >= 24 else
+        f"{int(age_hr)} 小時前" if age_hr >= 1 else "剛刷新"
     )
-    return CheckResult(name="NTU COOL session", ok=True, optional=True,
+    return CheckResult(name="NTU COOL 登入憑證", ok=True, optional=True,
                        detail=f"{headers_path} ({age_label})")
 
 
 def check_youtube_cookies(cookies_path: Path) -> CheckResult:
     if not cookies_path.exists():
         return CheckResult(
-            name="YouTube cookies (for unlisted videos)",
+            name="YouTube cookies (下載不公開影片用)",
             ok=False,
             optional=True,
-            detail=f"no cookies file at {cookies_path}",
-            fix_command="youtube-cookies  (will open browser to log in to Google)",
+            detail=f"找不到 {cookies_path}",
+            fix_command="youtube-cookies (會開啟瀏覽器讓你登入 Google)",
         )
     age_hr = (time.time() - cookies_path.stat().st_mtime) / 3600
     age_label = (
-        f"{int(age_hr/24)} day(s) old" if age_hr >= 24 else
-        f"{int(age_hr)} hour(s) old" if age_hr >= 1 else "fresh"
+        f"{int(age_hr/24)} 天前" if age_hr >= 24 else
+        f"{int(age_hr)} 小時前" if age_hr >= 1 else "剛刷新"
     )
-    return CheckResult(name="YouTube cookies (for unlisted videos)", ok=True, optional=True,
+    return CheckResult(name="YouTube cookies (下載不公開影片用)", ok=True, optional=True,
                        detail=f"{cookies_path} ({age_label})")
 
 
@@ -283,7 +283,7 @@ def _emit(check: CheckResult) -> None:
         mark = RED_CROSS
     print(f"  {mark} {check.name}  {check.detail}")
     if not check.ok and check.fix_command:
-        print(f"      → fix: {check.fix_command}")
+        print(f"      → 修復方式: {check.fix_command}")
 
 
 def run_doctor(
@@ -293,8 +293,8 @@ def run_doctor(
     fix: bool = False,
 ) -> int:
     """Standalone `doctor` subcommand: report (and optionally auto-fix) everything."""
-    print("ntu-cool-material doctor")
-    print(f"Platform: {platform.system()} {platform.release()}\n")
+    print("ntu-cool-material 系統檢查")
+    print(f"作業系統: {platform.system()} {platform.release()}\n")
     checks = _all_checks(headers_path, youtube_cookies_path)
     for c in checks:
         _emit(c)
@@ -302,20 +302,20 @@ def run_doctor(
     if fix:
         broken = [c for c in checks if not c.ok and c.auto_install is not None]
         if broken:
-            print(f"\nAttempting auto-fix for {len(broken)} item(s)...")
+            print(f"\n嘗試自動修復 {len(broken)} 個項目...")
             for c in broken:
-                print(f"  fixing: {c.name}")
+                print(f"  修復: {c.name}")
                 c.auto_install()
-            print("\nRe-checking...\n")
+            print("\n重新檢查...\n")
             checks = _all_checks(headers_path, youtube_cookies_path)
             for c in checks:
                 _emit(c)
 
     failed = [c for c in checks if not c.ok and not c.optional]
     if not failed:
-        print(f"\n{GREEN_CHECK} Ready.")
+        print(f"\n{GREEN_CHECK} 環境就緒。")
         return 0
-    print(f"\n{RED_CROSS} {len(failed)} required item(s) still missing.")
+    print(f"\n{RED_CROSS} 還缺少 {len(failed)} 個必要項目。")
     return 1
 
 
@@ -334,14 +334,14 @@ def ensure_ready(
          setup install, not destructive).
       3. Re-check; if still missing required items, print remaining hints and return False.
     """
-    required_names = {"Python 3.11+", "Playwright Chromium", "yt-dlp"}
+    required_names = {"Python 3.11 以上", "Playwright Chromium", "yt-dlp"}
 
     initial = [c for c in _all_checks(headers_path, youtube_cookies_path) if c.name in required_names]
     missing = [c for c in initial if not c.ok]
     if not missing:
         return True
 
-    print("First-time setup: a few things still need to be installed.\n")
+    print("第一次設定: 還缺少幾個東西。\n")
     for c in missing:
         print(f"  {RED_CROSS} {c.name} — {c.detail}")
 
@@ -349,14 +349,14 @@ def ensure_ready(
     manual = [c for c in missing if c.auto_install is None]
 
     if auto_fixable:
-        print(f"\nInstalling {len(auto_fixable)} item(s) automatically...\n")
+        print(f"\n自動安裝 {len(auto_fixable)} 個項目...\n")
         for c in auto_fixable:
             print(f"  → {c.name}")
             c.auto_install()
             print()
 
     if manual:
-        print("Please install these manually, then re-run:\n")
+        print("請手動安裝以下項目後再重試:\n")
         for c in manual:
             print(f"  • {c.name}: {c.fix_command}")
         return False
@@ -365,10 +365,10 @@ def ensure_ready(
     after = [c for c in _all_checks(headers_path, youtube_cookies_path) if c.name in required_names]
     still_missing = [c for c in after if not c.ok]
     if still_missing:
-        print("Some items still failing after auto-install:\n")
+        print("自動安裝後仍有問題:\n")
         for c in still_missing:
             print(f"  • {c.name}: {c.fix_command}")
         return False
 
-    print(f"{GREEN_CHECK} Setup complete.\n")
+    print(f"{GREEN_CHECK} 設定完成。\n")
     return True

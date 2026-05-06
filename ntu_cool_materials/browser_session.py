@@ -90,7 +90,7 @@ def refresh_headers_file(
                 if headless:
                     return BrowserSessionResult(headers_path=headers_path, logged_in=False, current_url=page.url)
 
-                print("Please finish NTU COOL login in the opened browser window.")
+                print("請在開啟的瀏覽器視窗完成 NTU COOL 登入。")
                 try:
                     page.wait_for_url(lambda url: not _looks_like_login(url), timeout=timeout_ms)
                 except PlaywrightTimeoutError as exc:

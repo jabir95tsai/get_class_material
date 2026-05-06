@@ -374,10 +374,10 @@ def _maybe_set_up_youtube_cookies(cookies_path: Path) -> None:
         return
     if not sys.stdin.isatty():
         return
-    print("\n尚未設定 YouTube cookies。下載「不公開」(unlisted) 影片需要這個。")
+    print("\n尚未設定 YouTube cookies,下載不公開影片會需要。")
     print("(若你只下載 PDF 或 Page 可以跳過)")
     try:
-        ans = input("現在設定嗎？會跳出瀏覽器讓你登入 Google 帳號 [y/N]: ").strip().lower()
+        ans = input("現在設定嗎? 會跳出瀏覽器讓你登入 Google 帳號 [y/N]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         return
     if ans not in {"y", "yes"}:
@@ -385,10 +385,10 @@ def _maybe_set_up_youtube_cookies(cookies_path: Path) -> None:
     try:
         from .youtube_cookies import export_youtube_cookies
         result = export_youtube_cookies(cookies_path=cookies_path)
-        print(f"  ✓ saved {result.cookie_count} cookies to {result.cookies_path}")
+        print(f"  ✓ 已存入 {result.cookie_count} 個 cookies → {result.cookies_path}")
     except Exception as exc:
-        print(f"  YouTube cookies 設定失敗: {exc}")
-        print("  (你之後可以隨時跑 `youtube-cookies` 重試)")
+        print(f"  設定 YouTube cookies 失敗: {exc}")
+        print("  (之後可以隨時執行 `youtube-cookies` 重試)")
 
 
 def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
@@ -407,26 +407,26 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     browser: BrowserSession | None = None
     if args.refresh_session or not headers_path.exists():
         if not headers_path.exists() and not args.refresh_session:
-            print(f"No headers file at {headers_path}. Opening browser to log in...")
+            print(f"找不到登入憑證 ({headers_path}),開啟瀏覽器登入...")
         try:
             browser = open_browser_session(
                 profile_dir=Path(args.profile_dir), headless=False, course_id=None,
             )
         except RuntimeError as exc:
-            print(f"Could not start browser session: {exc}")
+            print(f"無法啟動瀏覽器: {exc}")
             return 1
         if not _dump_cookies_to_headers_file(browser.context, headers_path):
             browser.close()
-            print("No NTU COOL cookies found in browser context.")
+            print("瀏覽器內沒有 NTU COOL 的 cookies。")
             return 1
-        print(f"  refreshed -> {headers_path}")
+        print(f"  已寫入登入憑證 → {headers_path}")
 
     try:
         client = CanvasSessionClient(base_url=base_url, headers=read_headers_file(headers_path))
     except (OSError, ValueError) as exc:
         if browser is not None:
             browser.close()
-        print(f"Could not read headers file: {exc}")
+        print(f"無法讀取登入憑證: {exc}")
         return 1
 
     try:
@@ -434,18 +434,18 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     except CanvasAPIError as exc:
         if browser is not None:
             browser.close()
-        print(f"Could not list courses: {exc}")
+        print(f"無法列出課程: {exc}")
         return 1
 
     if not courses:
         if browser is not None:
             browser.close()
-        print("No courses returned. Try --refresh-session, or --state to widen the filter.")
+        print("找不到課程。可以試試 --refresh-session 重新登入,或用 --state 改變過濾條件。")
         return 0
 
     def _run_download(course: dict[str, Any]) -> None:
         course_id = str(course["id"])
-        print(f"\n→ {course.get('name')!r} (id {course_id})\n")
+        print(f"\n→ {course.get('name')!r} (課程 ID {course_id})\n")
         try:
             download_course(
                 course_id=course_id,
@@ -464,7 +464,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                 skip_cool_videos=args.skip_cool_videos,
             )
         except RuntimeError as exc:
-            print(f"download-course failed: {exc}")
+            print(f"下載失敗: {exc}")
             # Don't bail on the loop — let the user try another course.
 
     n = len(courses)
@@ -479,7 +479,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         return str(c.get("name") or c.get("course_code") or c.get("id"))
 
     def _print_course_list() -> None:
-        print(f"\nFound {len(courses)} course(s):\n")
+        print(f"\n找到 {len(courses)} 門課程:\n")
         for i, c in enumerate(courses, 1):
             name = c.get("name") or c.get("course_code") or str(c.get("id"))
             code = c.get("course_code")
@@ -490,8 +490,8 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     def _confirm_redownload(course: dict[str, Any]) -> bool:
         try:
             ans = input(
-                f"⚠ 這個 session 裡剛剛已經下載過「{_course_label(course)}」。\n"
-                f"  再跑一次只會檢查是否有新檔案。要繼續嗎? [y/N]: "
+                f"⚠ 剛剛已經下載過「{_course_label(course)}」。\n"
+                f"  再跑一次只會檢查是否有新檔案,要繼續嗎? [y/N]: "
             ).strip().lower()
         except (EOFError, KeyboardInterrupt):
             return False
@@ -518,11 +518,11 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         try:
             historical = client.list_courses(enrollment_state="completed")
         except CanvasAPIError as exc:
-            print(f"Could not list historical courses: {exc}")
+            print(f"無法取得歷史課程: {exc}")
             return None
         historical = [c for c in historical if c.get("name") or c.get("course_code")]
         if not historical:
-            print("沒有找到歷史課程。")
+            print("找不到任何已結束的課程。")
             return None
 
         groups: dict[str, list[dict[str, Any]]] = {}
@@ -535,9 +535,9 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         term_names = sorted(groups.keys(), reverse=True)
 
         while True:  # semester picker (re-entered if course-level user picks 'b')
-            print(f"\nFound {len(historical)} 歷史課程 across {len(term_names)} 個學期:\n")
+            print(f"\n找到 {len(historical)} 門已結束課程,分布在 {len(term_names)} 個學期:\n")
             for i, name in enumerate(term_names, 1):
-                print(f"  {i}) {name}  ({len(groups[name])} courses)")
+                print(f"  {i}) {name}  ({len(groups[name])} 門課)")
             try:
                 raw = input(f"\n選擇學期 (1-{len(term_names)}, b = 返回, q = 離開)\n> ").strip()
             except (EOFError, KeyboardInterrupt):
@@ -554,7 +554,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                 term_name = term_names[idx]
                 term_courses = groups[term_name]
             except (ValueError, IndexError):
-                print(f"Invalid choice: {raw!r}. Enter 1-{len(term_names)}, 'b', or 'q'.")
+                print(f"無效輸入: {raw!r}。請輸入 1-{len(term_names)}、b、或 q。")
                 continue
 
             while True:  # course-in-semester picker
@@ -582,7 +582,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                         raise IndexError
                     return term_courses[idx]
                 except (ValueError, IndexError):
-                    print(f"Invalid choice: {raw!r}. Enter 1-{len(term_courses)}, 'b', or 'q'.")
+                    print(f"無效輸入: {raw!r}。請輸入 1-{len(term_courses)}、b、或 q。")
                     continue
 
     def _ask_pick_number() -> list[dict[str, Any]] | None:
@@ -616,12 +616,12 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                     raise IndexError
                 return [courses[idx]]
             except (ValueError, IndexError):
-                print(f"Invalid choice: {raw!r}. Enter 1-{n}, 'h', 'a', or 'q'.")
+                print(f"無效輸入: {raw!r}。請輸入 1-{n}、h、a、或 q。")
 
     def _download_each(targets: list[dict[str, Any]]) -> None:
         """Download a single course (1-element list) or many in sequence."""
         if len(targets) > 1:
-            print(f"\n→ Downloading all {len(targets)} courses sequentially...")
+            print(f"\n→ 開始依序下載全部 {len(targets)} 門課程...")
             for i, course in enumerate(targets, 1):
                 print(f"\n=========== [{i}/{len(targets)}] ===========")
                 _wrap_download(course)
@@ -638,10 +638,10 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                         "\n下一個動作: c = 繼續下載別的 / a = 下載全部 / h = 歷史課程 / q = 離開\n> "
                     ).strip()
                 except (EOFError, KeyboardInterrupt):
-                    return _quit("\naborted.")
+                    return _quit()
                 cmd = raw.lower()
                 if cmd in {"q", "quit", "exit", ""}:
-                    return _quit("Bye.")
+                    return _quit()
                 if cmd in {"a", "all"}:
                     _download_each(list(courses))
                     continue
@@ -653,9 +653,9 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                     if chosen is not None:
                         _wrap_download(chosen)
                     continue
-                print(f"Invalid choice: {raw!r}. Enter 'c', 'a', 'h', or 'q'.")
+                print(f"無效輸入: {raw!r}。請輸入 c、a、h、或 q。")
         except _UserQuit:
-            return _quit("Bye.")
+            return _quit()
     finally:
         if browser is not None:
             browser.close()

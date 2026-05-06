@@ -322,12 +322,12 @@ def download_files(plan: CoursePlan, client: CanvasSessionClient) -> StageStats:
                 # to you (locked-for-user, restricted to a section, etc.) → skip and
                 # continue with the rest.
                 if exc.code == 401:
-                    raise SessionExpiredError(f"got HTTP 401 downloading {target.name}") from exc
-                reason = "no permission" if exc.code == 403 else f"HTTP {exc.code}"
-                print(f"      ✗ skipped: {reason}")
+                    raise SessionExpiredError(f"下載 {target.name} 時收到 HTTP 401") from exc
+                reason = "無權限" if exc.code == 403 else f"HTTP {exc.code}"
+                print(f"      ✗ 跳過: {reason}")
                 stats.failed.append(f"{week.label}/{target.name}: {reason}")
             except Exception as exc:
-                print(f"      ✗ failed: {exc}")
+                print(f"      ✗ 失敗: {exc}")
                 stats.failed.append(f"{week.label}/{target.name}: {type(exc).__name__}: {exc}")
     return stats
 
@@ -359,13 +359,13 @@ def save_pages(plan: CoursePlan, client: CanvasSessionClient, course_id: str) ->
                     page = json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
                 if exc.code == 401:
-                    raise SessionExpiredError(f"got HTTP 401 fetching page {target_md.name}") from exc
-                reason = "no permission" if exc.code == 403 else f"HTTP {exc.code}"
-                print(f"      ✗ skipped: {reason}")
+                    raise SessionExpiredError(f"取得 {target_md.name} 時收到 HTTP 401") from exc
+                reason = "無權限" if exc.code == 403 else f"HTTP {exc.code}"
+                print(f"      ✗ 跳過: {reason}")
                 stats.failed.append(f"{week.label}/{target_md.name}: {reason}")
                 continue
             except Exception as exc:
-                print(f"      ✗ failed: {exc}")
+                print(f"      ✗ 失敗: {exc}")
                 stats.failed.append(f"{week.label}/{target_md.name}: {type(exc).__name__}: {exc}")
                 continue
             body = html_to_text(page.get("body"))
@@ -401,7 +401,7 @@ def download_youtube(plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-
         existing = {p.stem for p in videos_dir.glob("*.mp4")} if videos_dir.exists() else set()
         missing = expected_titles - existing
         if expected_titles and not missing:
-            print(f"  [{week.label}/youtube] {len(expected_titles)} video(s) already present, skipping yt-dlp")
+            print(f"  [{week.label}/youtube] {len(expected_titles)} 部影片已存在,跳過")
             stats.skipped += len(expected_titles)
             continue
 
@@ -411,7 +411,7 @@ def download_youtube(plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-
         ) as tf:
             tf.write("\n".join(urls) + "\n")
             urls_file = Path(tf.name)
-        print(f"  [{week.label}/youtube] running yt-dlp for {len(urls)} URL(s) ({len(missing)} missing)")
+        print(f"  [{week.label}/youtube] 開始下載 {len(urls)} 個 URL (缺少 {len(missing)} 個)")
         cmd = [
             yt_dlp, *YT_DLP_BASE_ARGS,
             "--cookies", str(cookies_path),
@@ -426,7 +426,7 @@ def download_youtube(plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-
         finally:
             urls_file.unlink(missing_ok=True)
         if result.returncode != 0:
-            print(f"    yt-dlp exit {result.returncode}")
+            print(f"    yt-dlp 結束代碼 {result.returncode}")
         rename_downloaded_videos(week_items=week_items, videos_dir=videos_dir)
         # Count how many of the expected titles are now on disk to derive done/failed.
         existing_after = {p.stem for p in videos_dir.glob("*.mp4")}
@@ -443,16 +443,16 @@ def _ensure_logged_in(page, course_id: str | None, sso_timeout_sec: int) -> bool
     from playwright.sync_api import TimeoutError as PWTimeout
 
     target = f"https://{CANVAS_NETLOC}/courses/{course_id}" if course_id else f"https://{CANVAS_NETLOC}/courses"
-    print(f"    verifying login at {target}")
+    print(f"    確認登入狀態 ({target})")
     page.goto(target, wait_until="domcontentloaded", timeout=120000)
     if LOGIN_RE.search(page.url):
-        print(f"    login required — complete SSO in the browser window (waiting up to {sso_timeout_sec}s)")
+        print(f"    需要登入 — 請在開啟的瀏覽器視窗完成 NTU SSO (最多等 {sso_timeout_sec} 秒)")
         try:
             page.wait_for_url(lambda u: not LOGIN_RE.search(u), timeout=sso_timeout_sec * 1000)
         except PWTimeout:
-            print("    SSO timeout")
+            print("    SSO 登入逾時")
             return False
-    print(f"    logged in: {page.url}")
+    print(f"    已登入: {page.url}")
     return True
 
 
@@ -539,10 +539,10 @@ def _capture_cool_video_in_page(page, captured: dict[int, dict[str, Any]],
         try:
             page.goto(module_item_url, wait_until="domcontentloaded", timeout=90000)
         except Exception as exc:
-            print(f"      attempt {attempt+1} nav err: {exc}")
+            print(f"      嘗試 {attempt+1} 載入失敗: {exc}")
             continue
         if LOGIN_RE.search(page.url):
-            print(f"      attempt {attempt+1} bounced to login; waiting for SSO")
+            print(f"      嘗試 {attempt+1} 被導回登入頁,等待 SSO")
             try:
                 page.wait_for_url(lambda u: not LOGIN_RE.search(u), timeout=sso_timeout_sec * 1000)
             except PWTimeout:
@@ -552,7 +552,7 @@ def _capture_cool_video_in_page(page, captured: dict[int, dict[str, Any]],
             if video_id in captured:
                 return captured[video_id]
             page.wait_for_timeout(1500)
-        print(f"      attempt {attempt+1}: no view JSON yet")
+        print(f"      嘗試 {attempt+1}: 還沒擷取到 view JSON")
     return None
 
 
@@ -577,33 +577,33 @@ def capture_and_download_cool_videos_in_page(plan: CoursePlan, page, captured: d
     targets = _cool_video_targets(plan)
     if not targets:
         return stats
-    print(f"  cool-videos: {len(targets)} target(s)")
+    print(f"  cool-video: {len(targets)} 個目標")
 
     for i, (week, item, video_id) in enumerate(targets, 1):
         title = str(item.get("title") or "").strip() or f"item-{item.get('id')}"
         mp4_target = week.week_dir / f"{sanitize_teacher_title(title)}.mp4"
         if mp4_target.exists() and mp4_target.stat().st_size > 0:
-            print(f"  [{week.label}/cool-video] [{i}/{len(targets)}] skip (mp4 exists): {mp4_target.name}")
+            print(f"  [{week.label}/cool-video] [{i}/{len(targets)}] 跳過(已存在): {mp4_target.name}")
             stats.skipped += 1
             continue
         module_item_url = f"https://{CANVAS_NETLOC}/courses/{course_id}/modules/items/{item['id']}"
         print(f"  [{week.label}/cool-video] [{i}/{len(targets)}] {title}")
         view = _capture_cool_video_in_page(page, captured, module_item_url, video_id, sso_timeout_sec)
         if view is None:
-            print(f"      ✗ FAILED to capture view JSON for video {video_id}")
-            stats.failed.append(f"{week.label}/{mp4_target.name} (LTI capture failed)")
+            print(f"      ✗ 無法擷取影片 {video_id} 的 view JSON")
+            stats.failed.append(f"{week.label}/{mp4_target.name} (擷取 LTI 失敗)")
             continue
         url = view.get("altSourceUri") or view.get("sourceUri")
         if not url:
-            print(f"      ✗ view JSON has no source URL")
-            stats.failed.append(f"{week.label}/{mp4_target.name} (no source URL)")
+            print(f"      ✗ view JSON 沒有來源 URL")
+            stats.failed.append(f"{week.label}/{mp4_target.name} (沒有來源 URL)")
             continue
-        print(f"      downloading mp4 ({view.get('length')}s) -> {mp4_target.name}")
+        print(f"      下載 mp4 ({view.get('length')} 秒) → {mp4_target.name}")
         try:
             _download_signed_url(url, mp4_target)
             stats.done += 1
         except Exception as exc:
-            print(f"        ✗ FAILED: {exc}")
+            print(f"        ✗ 失敗: {exc}")
             stats.failed.append(f"{week.label}/{mp4_target.name}: {type(exc).__name__}: {exc}")
     return stats
 
@@ -638,7 +638,7 @@ def capture_and_download_cool_videos(
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        print("    Playwright not installed. Install with: pip install -e \".[browser]\"  &&  python -m playwright install chromium")
+        print("    沒有安裝 Playwright。請執行: pip install -e \".[browser]\" 之後 python -m playwright install chromium")
         return stats
     profile_dir.parent.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
@@ -671,11 +671,11 @@ def _write_course_overview(plan: CoursePlan) -> Path:
     lines: list[str] = [
         f"# {course_name}",
         "",
-        f"**Course ID:** {plan.course_id}",
-        f"**Generated:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-        f"**Path:** `{plan.course_dir}`",
+        f"**課程 ID:** {plan.course_id}",
+        f"**產生時間:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"**路徑:** `{plan.course_dir}`",
         "",
-        "教材總覽 / Materials index. 每週的 PDF / Page / 影片都列在下方並連到本機檔案。",
+        "課程教材總覽。每週的 PDF / Page / 影片都列在下方並連到本機檔案。",
         "",
     ]
     for week in plan.weeks:
@@ -707,7 +707,7 @@ def _write_course_overview(plan: CoursePlan) -> Path:
             for line in per_type[key]:
                 lines.append(line)
         if not any(per_type.values()):
-            lines.append("- _(no downloadable items)_")
+            lines.append("- _(沒有可下載的內容)_")
         lines.append("")
     overview = plan.course_dir / "course_overview.md"
     overview.write_text("\n".join(lines), encoding="utf-8")
@@ -745,16 +745,16 @@ def download_course(
         if not _dump_cookies_to_headers_file(browser.context, headers_path):
             browser.close()
             raise RuntimeError("No NTU COOL cookies found in browser context")
-        print(f"  refreshed -> {headers_path}")
+        print(f"  已寫入登入憑證 → {headers_path}")
 
     if client is None:
         client = _build_session_client_from_file(headers_path, base_url)
 
     try:
         plan = plan_course(client, course_id, output_dir)
-        print(f"Course: {plan.course.get('name')!r}")
-        print(f"Output: {plan.course_dir}")
-        print(f"Weeks with content: {[w.label for w in plan.weeks]}")
+        print(f"課程: {plan.course.get('name')!r}")
+        print(f"存放位置: {plan.course_dir}")
+        print(f"有教材的週次: {[w.label for w in plan.weeks]}")
 
         course_stats = CourseStats()
 
@@ -762,15 +762,15 @@ def download_course(
             """Refresh SSO + cookies if we have a Playwright session. Returns True on success."""
             nonlocal client
             if browser is None:
-                print("  → cannot auto-recover session (no browser available). Re-run with --refresh-session.")
+                print("  → 無法自動重新登入(沒有開啟瀏覽器)。請重新執行並加上 --refresh-session。")
                 return False
-            print("  → NTU COOL session expired; re-authenticating in the same browser...")
+            print("  → NTU COOL 登入已過期,在同一個瀏覽器重新登入...")
             if not _ensure_logged_in(browser.page, course_id, sso_timeout_sec):
                 return False
             if not _dump_cookies_to_headers_file(browser.context, headers_path):
                 return False
             client = _build_session_client_from_file(headers_path, base_url)
-            print("  ✓ session refreshed, retrying stage")
+            print("  ✓ 重新登入完成,重試此階段")
             return True
 
         def _run_with_session_retry(stage_fn, label: str) -> StageStats:
@@ -783,29 +783,29 @@ def download_course(
                 return stage_fn(client)
 
         if not skip_pdfs:
-            print("\n[1/4] PDFs / Files")
+            print("\n[1/4] PDF 檔案")
             course_stats.pdfs = _run_with_session_retry(
-                lambda c: download_files(plan, c), "files"
+                lambda c: download_files(plan, c), "PDF"
             )
-            print(f"  downloaded={course_stats.pdfs.done}, skipped={course_stats.pdfs.skipped}, "
-                  f"failed={len(course_stats.pdfs.failed)}")
+            print(f"  下載 {course_stats.pdfs.done}、跳過 {course_stats.pdfs.skipped}、"
+                  f"失敗 {len(course_stats.pdfs.failed)}")
         if not skip_pages:
-            print("\n[2/4] Pages")
+            print("\n[2/4] Page 內容")
             course_stats.pages = _run_with_session_retry(
-                lambda c: save_pages(plan, c, course_id), "pages"
+                lambda c: save_pages(plan, c, course_id), "Page"
             )
-            print(f"  saved={course_stats.pages.done}, skipped={course_stats.pages.skipped}, "
-                  f"failed={len(course_stats.pages.failed)}")
+            print(f"  儲存 {course_stats.pages.done}、跳過 {course_stats.pages.skipped}、"
+                  f"失敗 {len(course_stats.pages.failed)}")
         if not skip_youtube:
-            print("\n[3/4] YouTube videos")
+            print("\n[3/4] YouTube 影片")
             if yt_cookies is None or not yt_cookies.exists():
-                print(f"  WARNING: youtube cookies not found at {yt_cookies} — videos may be unavailable")
+                print(f"  注意: 找不到 YouTube cookies ({yt_cookies}),不公開影片可能下載失敗")
             course_stats.youtube = download_youtube(
                 plan, cookies_path=yt_cookies or Path(".secrets/youtube_cookies.txt"), yt_dlp=yt_dlp
             )
 
         if not skip_cool_videos:
-            print("\n[4/4] NTU CDN videos (cool-video)")
+            print("\n[4/4] NTU 上課影片 (cool-video)")
             if browser is not None:
                 course_stats.cool_videos = capture_and_download_cool_videos_in_page(
                     plan, browser.page, browser.captured,
@@ -820,32 +820,32 @@ def download_course(
         # Per-course overview at the course root.
         try:
             overview_path = _write_course_overview(plan)
-            print(f"\n  overview: {overview_path.name}")
+            print(f"\n  目錄: {overview_path.name}")
         except Exception as exc:
-            print(f"\n  (could not write overview: {exc})")
+            print(f"\n  (無法產生目錄: {exc})")
 
         # Summary
         print("\n" + "=" * 60)
-        print("Done.")
-        print(f"  PDFs:        {course_stats.pdfs.done} new, "
-              f"{course_stats.pdfs.skipped} skipped, "
-              f"{len(course_stats.pdfs.failed)} failed")
-        print(f"  Pages:       {course_stats.pages.done} new, "
-              f"{course_stats.pages.skipped} skipped, "
-              f"{len(course_stats.pages.failed)} failed")
-        print(f"  YouTube:     {course_stats.youtube.done} new, "
-              f"{course_stats.youtube.skipped} skipped, "
-              f"{len(course_stats.youtube.failed)} failed")
-        print(f"  Cool-video:  {course_stats.cool_videos.done} new, "
-              f"{course_stats.cool_videos.skipped} skipped, "
-              f"{len(course_stats.cool_videos.failed)} failed")
+        print("完成。")
+        print(f"  PDF:        新增 {course_stats.pdfs.done}、"
+              f"跳過 {course_stats.pdfs.skipped}、"
+              f"失敗 {len(course_stats.pdfs.failed)}")
+        print(f"  Page:       新增 {course_stats.pages.done}、"
+              f"跳過 {course_stats.pages.skipped}、"
+              f"失敗 {len(course_stats.pages.failed)}")
+        print(f"  YouTube:    新增 {course_stats.youtube.done}、"
+              f"跳過 {course_stats.youtube.skipped}、"
+              f"失敗 {len(course_stats.youtube.failed)}")
+        print(f"  上課影片:   新增 {course_stats.cool_videos.done}、"
+              f"跳過 {course_stats.cool_videos.skipped}、"
+              f"失敗 {len(course_stats.cool_videos.failed)}")
         all_failures = (course_stats.pdfs.failed + course_stats.pages.failed
                         + course_stats.youtube.failed + course_stats.cool_videos.failed)
         if all_failures:
-            print(f"\nFailures ({len(all_failures)}):")
+            print(f"\n失敗清單 ({len(all_failures)} 筆):")
             for f in all_failures:
                 print(f"  ✗ {f}")
-        print(f"\nFiles saved to:\n  {plan.course_dir.resolve()}")
+        print(f"\n檔案存放位置:\n  {plan.course_dir.resolve()}")
         return plan
     finally:
         if owns_browser and browser is not None:

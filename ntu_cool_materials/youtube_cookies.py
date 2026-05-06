@@ -78,12 +78,12 @@ def export_youtube_cookies(
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(YOUTUBE_URL, wait_until="domcontentloaded", timeout=timeout_ms)
             if not headless and wait_for_login:
-                print("Please sign in to YouTube/Google in the opened browser if needed.")
-                print("The script will export cookies after it detects login cookies.")
+                print("請在開啟的瀏覽器登入 YouTube / Google。")
+                print("偵測到登入 cookie 後會自動匯出。")
                 _wait_for_login_cookies(context, timeout_ms=timeout_ms)
             elif not headless:
-                print("Please sign in to YouTube/Google in the opened browser if needed.")
-                print("Cookies will be exported after a short wait.")
+                print("請在開啟的瀏覽器登入 YouTube / Google。")
+                print("稍待片刻就會自動匯出 cookies。")
                 page.wait_for_timeout(20_000)
 
             cookies = context.cookies(
