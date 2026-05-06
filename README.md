@@ -1,23 +1,15 @@
-# NTU COOL Materials
+# NTU COOL Get Class Material
 
-> **一行指令,把 NTU COOL 整門課搬回本機。**
-> PDF、Page、YouTube 影片、上課影片,全部抓回來,檔名整整齊齊,可以直接餵給 ChatGPT / Gemini / NotebookLM 幫你讀書。
+> **一行指令,把 NTU COOL 整門課下載下來。**
+> PDF、上課簡報、YouTube 影片、上課影片,全部抓下來,可以直接餵給 ChatGPT / Gemini / NotebookLM 幫你讀書。
+
+## 如何使用
+
+開啟powershell,輸入以下指令:
 
 ```powershell
+pip install ntu-cool-material
 ntu-cool-gcm
-```
-
-```text
-找到 5 門課程:
-
-  1) 日文一下 Japanese (Ⅰ) (2)
-  2) 作業管理 Operations Management
-  3) 音樂、演化與大腦 Music, Evolution and the Brain
-  4) 組織行為學 Organizational Behavior
-  5) 管理科學模式 Management Science Model
-
-選擇課程 (1-5 可空格多選如 "1 3 5", h = 過去課程, a = 下載全部, en = English, q = 離開)
-> 3
 ```
 
 ---
@@ -30,41 +22,18 @@ ntu-cool-gcm
 
 1. 用你自己的台大帳號登入 NTU COOL(只在瀏覽器登入頁輸入密碼,程式不會看到)
 2. 把你選的課程整門搬下來:**PDF 講義、Page 文字內容、YouTube 連結影片、NTU 上課錄影**
-3. 用人看得懂的中文檔名整齊放好
 
-放好之後你可以:
+之後你可以:
 - 直接拖 PDF 到 ChatGPT / Gemini 問問題
 - 把 `.md` 文字貼進 NotebookLM 做筆記
-- 把 mp4 轉逐字稿後再餵給 AI
 
 ## 誰適合用
 
-- 台大學生,有自己 NTU COOL 帳號
-- 想要把整門課的教材集中到本機(尤其考前)
-- 不想一個一個檔案手動下載
-
-不適合:
-- 想抓別人課程的教材(本工具只抓你「自己有權限看到」的東西)
-- 想公開分享老師教材(請尊重智財權)
+- 台大學生,有自己 NTU COOL 帳號,想要把整門課的教材下載卻不想一個一個檔案手動下載
 
 ---
 
-## 最短使用流程(熟手版)
-
-如果你已經有 Python,就這樣:
-
-```powershell
-pip install ntu-cool-material
-ntu-cool-gcm
-```
-
-第一次跑會自動安裝缺的東西、跳出瀏覽器讓你登入、列出你的課程讓你選。
-
-如果你完全沒裝過 Python,看下面的「第一次使用」逐步教學。
-
----
-
-## 第一次使用(完整教學)
+## 新手使用完整教學
 
 ### 第 1 步 — 確認你有沒有 Python
 
@@ -494,3 +463,6 @@ python -m unittest discover -s tests
 支援的 Python 版本:3.11+。Playwright + yt-dlp + ffmpeg + Node.js 為下載 YouTube 影片所需,工具會在第一次執行時嘗試自動安裝。
 
 </details>
+
+
+
