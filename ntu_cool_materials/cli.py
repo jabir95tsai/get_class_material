@@ -470,8 +470,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     n = len(courses)
     downloaded_in_session: set[str] = set()
 
-    def _quit(message: str) -> int:
-        print(message)
+    def _quit(_message: str = "") -> int:
         if not args.keep_terminal:
             _close_parent_terminal_on_quit()
         return 0
