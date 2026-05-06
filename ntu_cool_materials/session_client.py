@@ -207,4 +207,4 @@ class CanvasSessionClient:
         message = f"Canvas session request failed with HTTP {exc.code} for {url}"
         if detail:
             message = f"{message}: {detail[:500]}"
-        return CanvasAPIError(message)
+        return CanvasAPIError(message, status_code=exc.code)

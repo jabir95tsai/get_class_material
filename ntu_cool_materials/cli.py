@@ -427,24 +427,36 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     if not args.skip_youtube:
         _maybe_set_up_youtube_cookies(youtube_cookies)
     browser: BrowserSession | None = None
+
+    def _open_login_browser() -> bool:
+        """Open Playwright, complete SSO, dump cookies. Updates the outer
+        `browser` reference. Returns True on success."""
+        nonlocal browser
+        try:
+            new_browser = open_browser_session(
+                profile_dir=Path(args.profile_dir), headless=False, course_id=None,
+            )
+        except RuntimeError as exc:
+            print(t(f"無法啟動瀏覽器: {exc}", f"Could not start browser: {exc}"))
+            return False
+        if not _dump_cookies_to_headers_file(new_browser.context, headers_path):
+            new_browser.close()
+            print(t("瀏覽器內沒有 NTU COOL 的 cookies。", "No NTU COOL cookies found in browser context."))
+            return False
+        print(t(f"  已寫入登入憑證 → {headers_path}", f"  saved login → {headers_path}"))
+        if browser is not None:
+            browser.close()
+        browser = new_browser
+        return True
+
     if args.refresh_session or not headers_path.exists():
         if not headers_path.exists() and not args.refresh_session:
             print(t(
                 f"找不到登入憑證 ({headers_path}),開啟瀏覽器登入...",
                 f"No saved login at {headers_path}; opening browser to log in...",
             ))
-        try:
-            browser = open_browser_session(
-                profile_dir=Path(args.profile_dir), headless=False, course_id=None,
-            )
-        except RuntimeError as exc:
-            print(t(f"無法啟動瀏覽器: {exc}", f"Could not start browser: {exc}"))
+        if not _open_login_browser():
             return 1
-        if not _dump_cookies_to_headers_file(browser.context, headers_path):
-            browser.close()
-            print(t("瀏覽器內沒有 NTU COOL 的 cookies。", "No NTU COOL cookies found in browser context."))
-            return 1
-        print(t(f"  已寫入登入憑證 → {headers_path}", f"  saved login → {headers_path}"))
 
     try:
         client = CanvasSessionClient(base_url=base_url, headers=read_headers_file(headers_path))
@@ -454,8 +466,26 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         print(t(f"無法讀取登入憑證: {exc}", f"Could not read saved login: {exc}"))
         return 1
 
+    def _list_courses_with_auto_refresh(enrollment_state: str) -> list[dict[str, Any]]:
+        """Call list_courses, and if we get HTTP 401 (session expired), open the
+        browser to re-login automatically and retry once."""
+        nonlocal client
+        try:
+            return client.list_courses(enrollment_state=enrollment_state)
+        except CanvasAPIError as exc:
+            if exc.status_code != 401:
+                raise
+            print(t(
+                "登入已過期,開啟瀏覽器重新登入...",
+                "Login expired; opening browser to re-authenticate...",
+            ))
+            if not _open_login_browser():
+                raise
+            client = CanvasSessionClient(base_url=base_url, headers=read_headers_file(headers_path))
+            return client.list_courses(enrollment_state=enrollment_state)
+
     try:
-        courses = client.list_courses(enrollment_state=args.state)
+        courses = _list_courses_with_auto_refresh(args.state)
     except CanvasAPIError as exc:
         if browser is not None:
             browser.close()

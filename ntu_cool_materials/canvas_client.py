@@ -16,7 +16,17 @@ JSON = dict[str, Any] | list[Any]
 
 
 class CanvasAPIError(RuntimeError):
-    """Raised when Canvas returns an error response."""
+    """Raised when Canvas returns an error response.
+
+    `status_code` is the HTTP response code when the error originated from
+    an HTTPError (None for parse / decode failures). Lets callers distinguish
+    between "your session expired" (401) and other failures so they can
+    auto-recover with a fresh login instead of just printing and exiting.
+    """
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -263,4 +273,4 @@ class CanvasClient:
         message = f"Canvas request failed with HTTP {exc.code} for {url}"
         if detail:
             message = f"{message}: {detail[:500]}"
-        return CanvasAPIError(message)
+        return CanvasAPIError(message, status_code=exc.code)
