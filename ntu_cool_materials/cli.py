@@ -505,43 +505,48 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         _run_download(course)
         downloaded_in_session.add(str(course.get("id")))
 
+    class _UserQuit(Exception):
+        """Raised when the user types 'q' from any prompt — propagates to the
+        top-level handler which exits cleanly."""
+
     def _pick_historical_course() -> dict[str, Any] | None:
-        """Two-step picker for past semesters.
-        1) Fetch every course with completed enrollment, group by term name.
-        2) User picks a term, then a course in that term.
-        Returns chosen course dict, or None on back-out at either step."""
+        """Two-step picker for past semesters: pick semester, then pick course.
+
+        Returns the chosen course dict, or None when the user backs out at the
+        TOP level of this picker (b/empty from the semester prompt). 'b' from
+        the course-in-semester prompt goes back to the semester prompt only.
+        Raises _UserQuit if 'q' is typed anywhere."""
         try:
             historical = client.list_courses(enrollment_state="completed")
         except CanvasAPIError as exc:
             print(f"Could not list historical courses: {exc}")
             return None
-        # Filter out courses that don't actually have content visible (Canvas
-        # sometimes returns access-restricted shells with name=None).
         historical = [c for c in historical if c.get("name") or c.get("course_code")]
         if not historical:
             print("沒有找到歷史課程。")
             return None
 
-        # Group by term name.
         groups: dict[str, list[dict[str, Any]]] = {}
         for c in historical:
             term = c.get("term") or {}
             term_name = str(term.get("name") or "(未指定學期)")
             groups.setdefault(term_name, []).append(c)
-        # Most recent first; Canvas term names sort well in reverse alpha
-        # ("114-2 (2026 Spring)" > "113-2 (2025 Spring)" > ...).
+        # Most recent first; Canvas term names like "114-2 (2026 Spring)" sort
+        # correctly under reverse-alpha.
         term_names = sorted(groups.keys(), reverse=True)
 
-        print(f"\nFound {len(historical)} 歷史課程 across {len(term_names)} 個學期:\n")
-        for i, name in enumerate(term_names, 1):
-            print(f"  {i}) {name}  ({len(groups[name])} courses)")
-
-        while True:
+        while True:  # semester picker (re-entered if course-level user picks 'b')
+            print(f"\nFound {len(historical)} 歷史課程 across {len(term_names)} 個學期:\n")
+            for i, name in enumerate(term_names, 1):
+                print(f"  {i}) {name}  ({len(groups[name])} courses)")
             try:
-                raw = input(f"\n選擇學期 (1-{len(term_names)}, q = 返回)\n> ").strip()
+                raw = input(f"\n選擇學期 (1-{len(term_names)}, b = 返回, q = 離開)\n> ").strip()
             except (EOFError, KeyboardInterrupt):
-                return None
-            if raw.lower() in {"q", "quit", "exit", ""}:
+                raise _UserQuit()
+            cmd = raw.lower()
+            if cmd in {"q", "quit", "exit"}:
+                raise _UserQuit()
+            if cmd in {"b", "back", ""}:
                 return None
             try:
                 idx = int(raw) - 1
@@ -549,97 +554,109 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                     raise IndexError
                 term_name = term_names[idx]
                 term_courses = groups[term_name]
-                break
             except (ValueError, IndexError):
-                print(f"Invalid choice: {raw!r}. Enter 1-{len(term_names)} or 'q'.")
+                print(f"Invalid choice: {raw!r}. Enter 1-{len(term_names)}, 'b', or 'q'.")
+                continue
 
-        print(f"\n{term_name} 的課程:\n")
-        for i, c in enumerate(term_courses, 1):
-            name = c.get("name") or c.get("course_code") or str(c.get("id"))
-            code = c.get("course_code")
-            suffix = f"  [{code}]" if code and code != name else ""
-            mark = "  ✓" if str(c.get("id")) in downloaded_in_session else ""
-            print(f"  {i}) {name}{suffix}{mark}")
+            while True:  # course-in-semester picker
+                print(f"\n{term_name} 的課程:\n")
+                for i, c in enumerate(term_courses, 1):
+                    name = c.get("name") or c.get("course_code") or str(c.get("id"))
+                    code = c.get("course_code")
+                    suffix = f"  [{code}]" if code and code != name else ""
+                    mark = "  ✓" if str(c.get("id")) in downloaded_in_session else ""
+                    print(f"  {i}) {name}{suffix}{mark}")
+                try:
+                    raw = input(
+                        f"\n選擇課程 (1-{len(term_courses)}, b = 返回, q = 離開)\n> "
+                    ).strip()
+                except (EOFError, KeyboardInterrupt):
+                    raise _UserQuit()
+                cmd = raw.lower()
+                if cmd in {"q", "quit", "exit"}:
+                    raise _UserQuit()
+                if cmd in {"b", "back", ""}:
+                    break  # back to semester picker (outer loop)
+                try:
+                    idx = int(raw) - 1
+                    if idx < 0:
+                        raise IndexError
+                    return term_courses[idx]
+                except (ValueError, IndexError):
+                    print(f"Invalid choice: {raw!r}. Enter 1-{len(term_courses)}, 'b', or 'q'.")
+                    continue
 
-        while True:
-            try:
-                raw = input(f"\n選擇課程 (1-{len(term_courses)}, q = 返回)\n> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                return None
-            if raw.lower() in {"q", "quit", "exit", ""}:
-                return None
-            try:
-                idx = int(raw) - 1
-                if idx < 0:
-                    raise IndexError
-                return term_courses[idx]
-            except (ValueError, IndexError):
-                print(f"Invalid choice: {raw!r}. Enter 1-{len(term_courses)} or 'q'.")
-
-    def _ask_pick_number() -> dict[str, Any] | None:
-        """Re-show the course list and ask for a number. Returns the chosen course
-        dict, or None if the user backed out / EOF'd. ✓ marks already-downloaded.
-        Accepts 'h' to dive into the historical-courses picker."""
+    def _ask_pick_number() -> list[dict[str, Any]] | None:
+        """Show the course list and ask the user to pick. Returns:
+          - [single course]    if user picked a number or chose one from history
+          - [all courses]      if user picked 'a'
+          - None               (currently unused — 'q' raises _UserQuit instead)
+        Raises _UserQuit on 'q'."""
         _print_course_list()
         while True:
             try:
-                raw = input(f"\n選擇課程 (1-{n}, h = 歷史課程, q = 離開)\n> ").strip()
+                raw = input(
+                    f"\n選擇課程 (1-{n}, h = 歷史課程, a = 下載全部, q = 離開)\n> "
+                ).strip()
             except (EOFError, KeyboardInterrupt):
-                return None
+                raise _UserQuit()
             cmd = raw.lower()
             if cmd in {"q", "quit", "exit", ""}:
-                return None
+                raise _UserQuit()
+            if cmd in {"a", "all"}:
+                return list(courses)
             if cmd in {"h", "history"}:
-                chosen = _pick_historical_course()
+                chosen = _pick_historical_course()  # may raise _UserQuit
                 if chosen is not None:
-                    return chosen
-                # back out from history → re-show current list and re-prompt
+                    return [chosen]
                 _print_course_list()
                 continue
             try:
                 idx = int(raw) - 1
                 if idx < 0:
                     raise IndexError
-                return courses[idx]
+                return [courses[idx]]
             except (ValueError, IndexError):
-                print(f"Invalid choice: {raw!r}. Enter 1-{n}, 'h', or 'q'.")
+                print(f"Invalid choice: {raw!r}. Enter 1-{n}, 'h', 'a', or 'q'.")
+
+    def _download_each(targets: list[dict[str, Any]]) -> None:
+        """Download a single course (1-element list) or many in sequence."""
+        if len(targets) > 1:
+            print(f"\n→ Downloading all {len(targets)} courses sequentially...")
+            for i, course in enumerate(targets, 1):
+                print(f"\n=========== [{i}/{len(targets)}] ===========")
+                _wrap_download(course)
+        else:
+            _wrap_download(targets[0])
 
     try:
-        # First iteration: list + pick.
-        chosen = _ask_pick_number()
-        if chosen is None:
-            return _quit("Bye.")
-        _wrap_download(chosen)
-
-        # Subsequent iterations: small action menu, list shown only after 'c'.
-        while True:
-            try:
-                raw = input(
-                    "\n下一個動作: c = 繼續下載別的 / a = 下載全部 / h = 歷史課程 / q = 離開\n> "
-                ).strip()
-            except (EOFError, KeyboardInterrupt):
-                return _quit("\naborted.")
-            cmd = raw.lower()
-            if cmd in {"q", "quit", "exit", ""}:
-                return _quit("Bye.")
-            if cmd in {"a", "all"}:
-                print(f"\n→ Downloading all {n} courses sequentially...")
-                for i, course in enumerate(courses, 1):
-                    print(f"\n=========== [{i}/{n}] ===========")
-                    _wrap_download(course)
-                continue
-            if cmd in {"c", "continue"}:
-                chosen = _ask_pick_number()
-                if chosen is None:
+        try:
+            _download_each(_ask_pick_number())
+            # Subsequent iterations: small action menu, list shown only after 'c'/'h'.
+            while True:
+                try:
+                    raw = input(
+                        "\n下一個動作: c = 繼續下載別的 / a = 下載全部 / h = 歷史課程 / q = 離開\n> "
+                    ).strip()
+                except (EOFError, KeyboardInterrupt):
+                    return _quit("\naborted.")
+                cmd = raw.lower()
+                if cmd in {"q", "quit", "exit", ""}:
                     return _quit("Bye.")
-                _wrap_download(chosen)
-                continue
-            if cmd in {"h", "history"}:
-                chosen = _pick_historical_course()
-                if chosen is not None:
-                    _wrap_download(chosen)
-                continue
-            print(f"Invalid choice: {raw!r}. Enter 'c', 'a', 'h', or 'q'.")
+                if cmd in {"a", "all"}:
+                    _download_each(list(courses))
+                    continue
+                if cmd in {"c", "continue"}:
+                    _download_each(_ask_pick_number())
+                    continue
+                if cmd in {"h", "history"}:
+                    chosen = _pick_historical_course()
+                    if chosen is not None:
+                        _wrap_download(chosen)
+                    continue
+                print(f"Invalid choice: {raw!r}. Enter 'c', 'a', 'h', or 'q'.")
+        except _UserQuit:
+            return _quit("Bye.")
     finally:
         if browser is not None:
             browser.close()
