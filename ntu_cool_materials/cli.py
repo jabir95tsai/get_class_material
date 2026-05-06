@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -615,8 +616,8 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                     print(f"  {i}) {name}{suffix}{mark}")
                 try:
                     raw = input(t(
-                        f"\n選擇課程 (1-{len(term_courses)}, a = 下載全部, b = 返回, q = 離開)\n> ",
-                        f"\nPick course (1-{len(term_courses)}, a = all, b = back, q = quit)\n> ",
+                        f"\n選擇課程 (1-{len(term_courses)} 可空格多選, a = 下載全部, b = 返回, q = 離開)\n> ",
+                        f"\nPick course(s) (1-{len(term_courses)} space-separated OK, a = all, b = back, q = quit)\n> ",
                     )).strip()
                 except (EOFError, KeyboardInterrupt):
                     raise _UserQuit()
@@ -627,30 +628,47 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                     break  # back to semester picker (outer loop)
                 if cmd in {"a", "all"}:
                     return list(term_courses)
-                try:
-                    idx = int(raw) - 1
-                    if idx < 0:
-                        raise IndexError
-                    return [term_courses[idx]]
-                except (ValueError, IndexError):
-                    print(t(
-                        f"無效輸入: {raw!r}。請輸入 1-{len(term_courses)}、a、b、或 q。",
-                        f"Invalid choice: {raw!r}. Enter 1-{len(term_courses)}, a, b, or q.",
-                    ))
-                    continue
+                indices = _parse_multi_indices(raw, len(term_courses))
+                if indices is not None:
+                    return [term_courses[i] for i in indices]
+                print(t(
+                    f"無效輸入: {raw!r}。請輸入 1-{len(term_courses)}(可空格多選)、a、b、或 q。",
+                    f"Invalid choice: {raw!r}. Enter 1-{len(term_courses)} (space-separated OK), a, b, or q.",
+                ))
+                continue
+
+    def _parse_multi_indices(raw: str, total: int) -> list[int] | None:
+        """Parse "1 3 5" / "1,3,5" / "1, 3, 5" into 0-based indices.
+        Returns None if any token isn't a valid 1..total integer."""
+        parts = [p for p in re.split(r"[\s,]+", raw) if p]
+        if not parts:
+            return None
+        out: list[int] = []
+        seen: set[int] = set()
+        for p in parts:
+            if not p.isdigit():
+                return None
+            i = int(p) - 1
+            if not (0 <= i < total):
+                return None
+            if i not in seen:
+                seen.add(i)
+                out.append(i)
+        return out
 
     def _ask_pick_number() -> list[dict[str, Any]] | None:
         """Show the course list and ask the user to pick. Returns:
-          - [single course]    if user picked a number or chose one from history
-          - [all courses]      if user picked 'a'
-          - None               (currently unused — 'q' raises _UserQuit instead)
+          - [single course]            if user typed a number
+          - [course_a, course_b, ...]  if user typed several numbers (e.g. "1 3 5")
+          - [all courses]              if user typed 'a'
+          - [chosen from history]      if user took the 'h' branch
         Raises _UserQuit on 'q'."""
         _print_course_list()
         while True:
             try:
                 raw = input(t(
-                    f"\n選擇課程 (1-{n}, h = 歷史課程, a = 下載全部, en = English, q = 離開)\n> ",
-                    f"\nPick course (1-{n}, h = past courses, a = all, zh = 中文, q = quit)\n> ",
+                    f"\n選擇課程 (1-{n} 可空格多選如 \"1 3 5\", h = 歷史課程, a = 下載全部, en = English, q = 離開)\n> ",
+                    f"\nPick course(s) (1-{n} space-separated for multi like \"1 3 5\", h = past, a = all, zh = 中文, q = quit)\n> ",
                 )).strip()
             except (EOFError, KeyboardInterrupt):
                 raise _UserQuit()
@@ -669,16 +687,13 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                     return chosen_list
                 _print_course_list()
                 continue
-            try:
-                idx = int(raw) - 1
-                if idx < 0:
-                    raise IndexError
-                return [courses[idx]]
-            except (ValueError, IndexError):
-                print(t(
-                    f"無效輸入: {raw!r}。請輸入 1-{n}、h、a、en、或 q。",
-                    f"Invalid choice: {raw!r}. Enter 1-{n}, h, a, zh, or q.",
-                ))
+            indices = _parse_multi_indices(raw, n)
+            if indices is not None:
+                return [courses[i] for i in indices]
+            print(t(
+                f"無效輸入: {raw!r}。請輸入 1-{n}(可空格多選)、h、a、en、或 q。",
+                f"Invalid choice: {raw!r}. Enter 1-{n} (space-separated OK), h, a, zh, or q.",
+            ))
 
     def _download_each(targets: list[dict[str, Any]]) -> None:
         """Download a single course (1-element list) or many in sequence."""
