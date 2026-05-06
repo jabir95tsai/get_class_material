@@ -543,12 +543,13 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         """Raised when the user types 'q' from any prompt — propagates to the
         top-level handler which exits cleanly."""
 
-    def _pick_historical_course() -> dict[str, Any] | None:
-        """Two-step picker for past semesters: pick semester, then pick course.
+    def _pick_historical_course() -> list[dict[str, Any]] | None:
+        """Two-step picker for past semesters: pick semester, then pick course(s).
 
-        Returns the chosen course dict, or None when the user backs out at the
-        TOP level of this picker (b/empty from the semester prompt). 'b' from
-        the course-in-semester prompt goes back to the semester prompt only.
+        Returns a list with 1+ courses (single pick = 1 course, 'a' = every course
+        in that semester), or None when the user backs out at the TOP level of
+        this picker (b/empty from the semester prompt). 'b' from the
+        course-in-semester prompt goes back to the semester prompt only.
         Raises _UserQuit if 'q' is typed anywhere."""
         try:
             historical = client.list_courses(enrollment_state="completed")
@@ -614,8 +615,8 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                     print(f"  {i}) {name}{suffix}{mark}")
                 try:
                     raw = input(t(
-                        f"\n選擇課程 (1-{len(term_courses)}, b = 返回, q = 離開)\n> ",
-                        f"\nPick course (1-{len(term_courses)}, b = back, q = quit)\n> ",
+                        f"\n選擇課程 (1-{len(term_courses)}, a = 下載全部, b = 返回, q = 離開)\n> ",
+                        f"\nPick course (1-{len(term_courses)}, a = all, b = back, q = quit)\n> ",
                     )).strip()
                 except (EOFError, KeyboardInterrupt):
                     raise _UserQuit()
@@ -624,15 +625,17 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                     raise _UserQuit()
                 if cmd in {"b", "back", ""}:
                     break  # back to semester picker (outer loop)
+                if cmd in {"a", "all"}:
+                    return list(term_courses)
                 try:
                     idx = int(raw) - 1
                     if idx < 0:
                         raise IndexError
-                    return term_courses[idx]
+                    return [term_courses[idx]]
                 except (ValueError, IndexError):
                     print(t(
-                        f"無效輸入: {raw!r}。請輸入 1-{len(term_courses)}、b、或 q。",
-                        f"Invalid choice: {raw!r}. Enter 1-{len(term_courses)}, b, or q.",
+                        f"無效輸入: {raw!r}。請輸入 1-{len(term_courses)}、a、b、或 q。",
+                        f"Invalid choice: {raw!r}. Enter 1-{len(term_courses)}, a, b, or q.",
                     ))
                     continue
 
@@ -661,9 +664,9 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             if cmd in {"a", "all"}:
                 return list(courses)
             if cmd in {"h", "history"}:
-                chosen = _pick_historical_course()
-                if chosen is not None:
-                    return [chosen]
+                chosen_list = _pick_historical_course()
+                if chosen_list:
+                    return chosen_list
                 _print_course_list()
                 continue
             try:
@@ -715,9 +718,9 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                     _download_each(_ask_pick_number())
                     continue
                 if cmd in {"h", "history"}:
-                    chosen = _pick_historical_course()
-                    if chosen is not None:
-                        _wrap_download(chosen)
+                    chosen_list = _pick_historical_course()
+                    if chosen_list:
+                        _download_each(chosen_list)
                     continue
                 print(t(
                     f"無效輸入: {raw!r}。請輸入 c、a、h、en、或 q。",
