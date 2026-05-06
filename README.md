@@ -1,7 +1,6 @@
 # NTU COOL Get Class Material
 
-> **一行指令,把 NTU COOL 整門課下載下來。**
-> PDF、上課簡報、YouTube 影片、上課影片,全部抓下來,可以直接餵給 ChatGPT / Gemini / NotebookLM 幫你讀書。
+> **一行指令,把 NTU COOL 整門課PDF、上課簡報、上課影片下載下來。**
 
 ## 如何使用
 
