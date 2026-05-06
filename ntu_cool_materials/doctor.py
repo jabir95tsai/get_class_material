@@ -345,9 +345,21 @@ def ensure_ready(
          setup install, not destructive).
       3. Re-check; if still missing required items, print remaining hints and return False.
     """
-    required_names = {"Python 3.11 以上", "Playwright Chromium", "yt-dlp"}
+    # "Blocking" — without these, nothing works at all. Refuse to proceed if
+    # we can't get them installed.
+    blocking_names = {"Python 3.11 以上", "Playwright Chromium", "yt-dlp"}
+    # "Strongly recommended" — needed for the YouTube stage but not the
+    # PDF / Page / NTU CDN stages. Auto-install best-effort; if the install
+    # fails (no winget, no brew, etc.), warn and let the user proceed —
+    # download_youtube has its own pre-check that prints a clear install
+    # hint at the moment YouTube downloads would fire.
+    recommended_names = {
+        "Node.js (下載 YouTube 影片用)",
+        "ffmpeg (下載 YouTube 影片用)",
+    }
+    relevant = blocking_names | recommended_names
 
-    initial = [c for c in _all_checks(headers_path, youtube_cookies_path) if c.name in required_names]
+    initial = [c for c in _all_checks(headers_path, youtube_cookies_path) if c.name in relevant]
     missing = [c for c in initial if not c.ok]
     if not missing:
         return True
@@ -357,7 +369,7 @@ def ensure_ready(
         print(f"  {RED_CROSS} {c.name} — {c.detail}")
 
     auto_fixable = [c for c in missing if c.auto_install is not None]
-    manual = [c for c in missing if c.auto_install is None]
+    manual_blocking = [c for c in missing if c.auto_install is None and c.name in blocking_names]
 
     if auto_fixable:
         print(t(
@@ -369,19 +381,34 @@ def ensure_ready(
             c.auto_install()
             print()
 
-    if manual:
-        print(t("請手動安裝以下項目後再重試:\n", "Please install these manually, then re-run:\n"))
-        for c in manual:
+    if manual_blocking:
+        print(t("請手動安裝以下必要項目後再重試:\n", "Please install these required items manually, then re-run:\n"))
+        for c in manual_blocking:
             print(f"  • {c.name}: {c.fix_command}")
         return False
 
-    after = [c for c in _all_checks(headers_path, youtube_cookies_path) if c.name in required_names]
-    still_missing = [c for c in after if not c.ok]
-    if still_missing:
-        print(t("自動安裝後仍有問題:\n", "Some items still failing after auto-install:\n"))
-        for c in still_missing:
+    after = [c for c in _all_checks(headers_path, youtube_cookies_path) if c.name in relevant]
+    still_missing_blocking = [c for c in after if not c.ok and c.name in blocking_names]
+    still_missing_recommended = [c for c in after if not c.ok and c.name in recommended_names]
+
+    if still_missing_blocking:
+        print(t("自動安裝後必要項目仍有問題:\n", "Required items still failing after auto-install:\n"))
+        for c in still_missing_blocking:
             print(f"  • {c.name}: {c.fix_command}")
         return False
+
+    if still_missing_recommended:
+        print(t(
+            "\n以下項目沒裝起來(YouTube 下載會跳過):\n",
+            "\nThese installs didn't take (YouTube downloads will be skipped):\n",
+        ))
+        for c in still_missing_recommended:
+            print(f"  • {c.name}: {c.fix_command}")
+        print(t(
+            "  之後可以手動裝完再重新打開,或執行 `ntu-cool-materials doctor --fix` 再試一次。\n",
+            "  Install them manually then restart this terminal, or re-run `ntu-cool-materials doctor --fix`.\n",
+        ))
+        # don't return False — PDFs / Pages / cool-video still work
 
     print(t(f"{GREEN_CHECK} 設定完成。\n", f"{GREEN_CHECK} Setup complete.\n"))
     return True
