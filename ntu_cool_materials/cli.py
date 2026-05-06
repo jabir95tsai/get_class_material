@@ -283,31 +283,78 @@ def _cmd_sync(client: CanvasClient, args: argparse.Namespace) -> int:
     return 1 if any(item.failed for item in stats) else 0
 
 
+def _windows_parent_pid_of(pid: int) -> int | None:
+    """Walk Windows' process snapshot to find the parent PID of `pid`."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_void_p),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", ctypes.c_char * 260),
+        ]
+
+    TH32CS_SNAPPROCESS = 0x00000002
+    INVALID = ctypes.c_void_p(-1).value
+    h = ctypes.windll.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if h == INVALID or h == 0:
+        return None
+    try:
+        pe = PROCESSENTRY32()
+        pe.dwSize = ctypes.sizeof(PROCESSENTRY32)
+        if ctypes.windll.kernel32.Process32First(h, ctypes.byref(pe)):
+            while True:
+                if pe.th32ProcessID == pid:
+                    return int(pe.th32ParentProcessID)
+                if not ctypes.windll.kernel32.Process32Next(h, ctypes.byref(pe)):
+                    break
+    finally:
+        ctypes.windll.kernel32.CloseHandle(h)
+    return None
+
+
 def _close_parent_terminal_on_quit() -> None:
     """On Windows, close the surrounding terminal window when the user quits.
 
     Skipped when stdin isn't a tty (piped input / tests) so we never kill the
     caller's shell unintentionally.
 
-    We can't just kill `os.getppid()` — pip's console-script entry point on
-    Windows is a tiny `ntu-cool-gcm.exe` wrapper that becomes Python's parent,
-    so killing it doesn't close the actual terminal window. Instead we ask the
-    Windows console window to close itself via WM_CLOSE; PowerShell/cmd/
-    Windows Terminal all honor this and shut down cleanly along with their
-    children (including us).
+    Why we kill the GRANDPARENT, not the parent: pip's console-script entry
+    point on Windows is a `ntu-cool-gcm.exe` wrapper that sits between Python
+    and the shell. So our process tree looks like:
+      powershell.exe  ←  the terminal we want to close
+        └─ ntu-cool-gcm.exe   (= os.getppid())
+            └─ python.exe     (= os.getpid())
+    Killing os.getppid() kills the wrapper but the shell stays alive (which is
+    what shipped in v0.1.6/v0.1.8 and silently failed). We need to walk up one
+    more level and kill the shell. When the shell dies, Windows Terminal /
+    conhost notices and closes the tab/window.
     """
     if os.name != "nt":
         return
     if not sys.stdin.isatty():
         return
     try:
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        user32 = ctypes.windll.user32
-        hwnd = kernel32.GetConsoleWindow()
-        if hwnd:
-            WM_CLOSE = 0x0010
-            user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+        wrapper_pid = os.getppid()
+        shell_pid = _windows_parent_pid_of(wrapper_pid)
+        target_pid = shell_pid or wrapper_pid
+        DETACHED_PROCESS = 0x00000008
+        # Detached so the kill happens after we've exited cleanly.
+        subprocess.Popen(
+            ["cmd", "/c", f"timeout /t 1 /nobreak >nul && taskkill /F /PID {target_pid}"],
+            creationflags=DETACHED_PROCESS,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
     except Exception:
         pass
 
@@ -388,14 +435,6 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         print("No courses returned. Try --refresh-session, or --state to widen the filter.")
         return 0
 
-    def _print_course_list() -> None:
-        print(f"\nFound {len(courses)} course(s):\n")
-        for i, c in enumerate(courses, 1):
-            name = c.get("name") or c.get("course_code") or str(c.get("id"))
-            code = c.get("course_code")
-            suffix = f"  [{code}]" if code and code != name else ""
-            print(f"  {i}) {name}{suffix}")
-
     def _run_download(course: dict[str, Any]) -> None:
         course_id = str(course["id"])
         print(f"\n→ {course.get('name')!r} (id {course_id})\n")
@@ -421,6 +460,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             # Don't bail on the loop — let the user try another course.
 
     n = len(courses)
+    downloaded_in_session: set[str] = set()
 
     def _quit(message: str) -> int:
         print(message)
@@ -428,9 +468,38 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             _close_parent_terminal_on_quit()
         return 0
 
+    def _course_label(c: dict[str, Any]) -> str:
+        return str(c.get("name") or c.get("course_code") or c.get("id"))
+
+    def _print_course_list() -> None:
+        print(f"\nFound {len(courses)} course(s):\n")
+        for i, c in enumerate(courses, 1):
+            name = c.get("name") or c.get("course_code") or str(c.get("id"))
+            code = c.get("course_code")
+            suffix = f"  [{code}]" if code and code != name else ""
+            mark = "  ✓" if str(c.get("id")) in downloaded_in_session else ""
+            print(f"  {i}) {name}{suffix}{mark}")
+
+    def _confirm_redownload(course: dict[str, Any]) -> bool:
+        try:
+            ans = input(
+                f"⚠ 這個 session 裡剛剛已經下載過「{_course_label(course)}」。\n"
+                f"  再跑一次只會檢查是否有新檔案。要繼續嗎? [y/N]: "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return ans in {"y", "yes"}
+
+    def _wrap_download(course: dict[str, Any], *, force: bool = False) -> None:
+        if not force and str(course.get("id")) in downloaded_in_session:
+            if not _confirm_redownload(course):
+                return
+        _run_download(course)
+        downloaded_in_session.add(str(course.get("id")))
+
     def _ask_pick_number() -> dict[str, Any] | None:
         """Re-show the course list and ask for a number. Returns the chosen course
-        dict, or None if the user backed out / EOF'd."""
+        dict, or None if the user backed out / EOF'd. ✓ marks already-downloaded."""
         _print_course_list()
         while True:
             try:
@@ -452,13 +521,13 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         chosen = _ask_pick_number()
         if chosen is None:
             return _quit("Bye.")
-        _run_download(chosen)
+        _wrap_download(chosen)
 
-        # Subsequent iterations: small action menu, list shown only after 'continue'.
+        # Subsequent iterations: small action menu, list shown only after 'c'.
         while True:
             try:
                 raw = input(
-                    "\n下一個動作: continue = 繼續下載別的 / a = 下載全部 / q = 離開\n> "
+                    "\n下一個動作: c = 繼續下載別的 / a = 下載全部 / q = 離開\n> "
                 ).strip()
             except (EOFError, KeyboardInterrupt):
                 return _quit("\naborted.")
@@ -469,15 +538,15 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                 print(f"\n→ Downloading all {n} courses sequentially...")
                 for i, course in enumerate(courses, 1):
                     print(f"\n=========== [{i}/{n}] ===========")
-                    _run_download(course)
+                    _wrap_download(course)
                 continue
             if cmd in {"c", "continue"}:
                 chosen = _ask_pick_number()
                 if chosen is None:
                     return _quit("Bye.")
-                _run_download(chosen)
+                _wrap_download(chosen)
                 continue
-            print(f"Invalid choice: {raw!r}. Enter 'continue', 'a', or 'q'.")
+            print(f"Invalid choice: {raw!r}. Enter 'c', 'a', or 'q'.")
     finally:
         if browser is not None:
             browser.close()
