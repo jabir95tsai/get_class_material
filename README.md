@@ -7,7 +7,7 @@
 開啟powershell,輸入以下指令:
 
 ```powershell
-pip install ntu-cool-material
+pip install get-class-material
 ntu-cool-gcm
 ```
 
@@ -77,7 +77,7 @@ python --version
 在 PowerShell 貼上:
 
 ```powershell
-pip install ntu-cool-material
+pip install get-class-material
 ```
 
 按 Enter,等它跑完(會看到一堆 `Collecting...`、`Downloading...`、`Installing...`)。最後看到 `Successfully installed ...` 就 OK。
@@ -295,7 +295,7 @@ youtube-cookies
 
 **解法:** 重裝一次,這次記得勾那個選項。然後**關掉 PowerShell 重開**。
 
-### Q: 輸入 `pip install ntu-cool-material` 顯示「找不到 pip」
+### Q: 輸入 `pip install get-class-material` 顯示「找不到 pip」
 
 跟上一題一樣,通常是 Python 沒裝好。重裝 Python 並勾「Add Python to PATH」。
 
@@ -455,7 +455,7 @@ python -m unittest discover -s tests
 
 架構說明見 [CLAUDE.md](CLAUDE.md)。
 
-- PyPI: <https://pypi.org/project/ntu-cool-material/>
+- PyPI: <https://pypi.org/project/get-class-material/>
 - GitHub: <https://github.com/jabir95tsai/get_class_material>
 - License: MIT — 見 [LICENSE](LICENSE)
 
