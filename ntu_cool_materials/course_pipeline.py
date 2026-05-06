@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -377,10 +378,68 @@ def save_pages(plan: CoursePlan, client: CanvasSessionClient, course_id: str) ->
     return stats
 
 
+_YTDLP_FORMAT_FRAGMENT_RE = re.compile(r"\.f\d+\.(mp4|m4a|webm|mkv)$", re.IGNORECASE)
+
+
+def _delete_orphan_format_fragments(videos_dir: Path) -> int:
+    """Remove yt-dlp format-tagged fragments (foo.f137.mp4, foo.f140.m4a) left
+    behind by an earlier run that couldn't merge them (usually because ffmpeg
+    was missing). These are useless on their own — the .f137 has no audio,
+    the .f140 has no picture — and our rename pass would otherwise promote
+    the .f137.mp4 to the human title, leaving the user with a silent video.
+    Returns how many were deleted."""
+    if not videos_dir.exists():
+        return 0
+    n = 0
+    for p in videos_dir.iterdir():
+        if p.is_file() and _YTDLP_FORMAT_FRAGMENT_RE.search(p.name):
+            try:
+                p.unlink()
+                n += 1
+            except OSError:
+                pass
+    return n
+
+
 def download_youtube(plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-dlp") -> StageStats:
     """For each week with YouTube items, run yt-dlp into the week dir then rename."""
+    import platform
     import tempfile
     stats = StageStats()
+
+    # Hard dependency: without ffmpeg, yt-dlp downloads video and audio as
+    # two separate files (foo.f137.mp4 + foo.f140.m4a) and can't merge them
+    # into a playable mp4. Skipping the entire stage is much better UX than
+    # silently producing a soundless video.
+    if shutil.which("ffmpeg") is None:
+        sys_ = platform.system()
+        hint = {
+            "Windows": "winget install Gyan.FFmpeg",
+            "Darwin": "brew install ffmpeg",
+        }.get(sys_, "apt install ffmpeg  (or your distro's equivalent)")
+        print(t(
+            f"  ⚠ 找不到 ffmpeg。yt-dlp 會把影片跟聲音存成兩個檔案,但沒辦法合併成可播放的 mp4。\n"
+            f"     請先安裝: {hint}\n"
+            f"     或執行 `ntu-cool-materials doctor --fix` 嘗試自動安裝。\n"
+            f"  YouTube 階段先跳過。",
+            f"  ⚠ ffmpeg not found. Without it, yt-dlp would leave separate video/audio\n"
+            f"     files that can't be merged into a playable mp4.\n"
+            f"     Install it first: {hint}\n"
+            f"     Or run `ntu-cool-materials doctor --fix` to try auto-install.\n"
+            f"  Skipping the YouTube stage.",
+        ))
+        return stats
+
+    # Soft dependency: yt-dlp uses node to solve YouTube's JS challenge for
+    # higher-quality formats. Without it some videos fail or cap at 360p.
+    if shutil.which("node") is None:
+        print(t(
+            "  ⚠ 找不到 Node.js。yt-dlp 在解 YouTube JS 挑戰時可能會失敗或畫質卡在 360p。\n"
+            "     建議裝 Node.js: winget install OpenJS.NodeJS / brew install node",
+            "  ⚠ Node.js not found. yt-dlp may fail YouTube's JS challenge or cap quality\n"
+            "     at 360p. Install: winget install OpenJS.NodeJS / brew install node",
+        ))
+
     for week in plan.weeks:
         urls: list[str] = []
         seen: set[str] = set()
@@ -428,6 +487,15 @@ def download_youtube(plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-
             urls_file.unlink(missing_ok=True)
         if result.returncode != 0:
             print(f"    yt-dlp 結束代碼 {result.returncode}")
+        # Sweep stranded format-tagged fragments (foo.f137.mp4 / foo.f140.m4a)
+        # before renaming, so the rename pass can't promote a video-only file
+        # to the human title.
+        orphans = _delete_orphan_format_fragments(videos_dir)
+        if orphans:
+            print(t(
+                f"    清掉 {orphans} 個未合併的串流檔(.fNNN.*)",
+                f"    cleaned up {orphans} unmerged stream fragment(s) (.fNNN.*)",
+            ))
         rename_downloaded_videos(week_items=week_items, videos_dir=videos_dir)
         # Count how many of the expected titles are now on disk to derive done/failed.
         existing_after = {p.stem for p in videos_dir.glob("*.mp4")}
