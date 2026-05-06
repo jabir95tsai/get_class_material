@@ -22,6 +22,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .i18n import t
+
 
 GREEN_CHECK = "✓"
 RED_CROSS = "✗"
@@ -283,7 +285,7 @@ def _emit(check: CheckResult) -> None:
         mark = RED_CROSS
     print(f"  {mark} {check.name}  {check.detail}")
     if not check.ok and check.fix_command:
-        print(f"      → 修復方式: {check.fix_command}")
+        print(t(f"      → 修復方式: {check.fix_command}", f"      → fix: {check.fix_command}"))
 
 
 def run_doctor(
@@ -293,8 +295,11 @@ def run_doctor(
     fix: bool = False,
 ) -> int:
     """Standalone `doctor` subcommand: report (and optionally auto-fix) everything."""
-    print("ntu-cool-material 系統檢查")
-    print(f"作業系統: {platform.system()} {platform.release()}\n")
+    print(t("ntu-cool-material 系統檢查", "ntu-cool-material doctor"))
+    print(t(
+        f"作業系統: {platform.system()} {platform.release()}\n",
+        f"Platform: {platform.system()} {platform.release()}\n",
+    ))
     checks = _all_checks(headers_path, youtube_cookies_path)
     for c in checks:
         _emit(c)
@@ -302,20 +307,26 @@ def run_doctor(
     if fix:
         broken = [c for c in checks if not c.ok and c.auto_install is not None]
         if broken:
-            print(f"\n嘗試自動修復 {len(broken)} 個項目...")
+            print(t(
+                f"\n嘗試自動修復 {len(broken)} 個項目...",
+                f"\nAttempting auto-fix for {len(broken)} item(s)...",
+            ))
             for c in broken:
-                print(f"  修復: {c.name}")
+                print(t(f"  修復: {c.name}", f"  fixing: {c.name}"))
                 c.auto_install()
-            print("\n重新檢查...\n")
+            print(t("\n重新檢查...\n", "\nRe-checking...\n"))
             checks = _all_checks(headers_path, youtube_cookies_path)
             for c in checks:
                 _emit(c)
 
     failed = [c for c in checks if not c.ok and not c.optional]
     if not failed:
-        print(f"\n{GREEN_CHECK} 環境就緒。")
+        print(t(f"\n{GREEN_CHECK} 環境就緒。", f"\n{GREEN_CHECK} Ready."))
         return 0
-    print(f"\n{RED_CROSS} 還缺少 {len(failed)} 個必要項目。")
+    print(t(
+        f"\n{RED_CROSS} 還缺少 {len(failed)} 個必要項目。",
+        f"\n{RED_CROSS} {len(failed)} required item(s) still missing.",
+    ))
     return 1
 
 
@@ -341,7 +352,7 @@ def ensure_ready(
     if not missing:
         return True
 
-    print("第一次設定: 還缺少幾個東西。\n")
+    print(t("第一次設定: 還缺少幾個東西。\n", "First-time setup: a few things still need to be installed.\n"))
     for c in missing:
         print(f"  {RED_CROSS} {c.name} — {c.detail}")
 
@@ -349,26 +360,28 @@ def ensure_ready(
     manual = [c for c in missing if c.auto_install is None]
 
     if auto_fixable:
-        print(f"\n自動安裝 {len(auto_fixable)} 個項目...\n")
+        print(t(
+            f"\n自動安裝 {len(auto_fixable)} 個項目...\n",
+            f"\nInstalling {len(auto_fixable)} item(s) automatically...\n",
+        ))
         for c in auto_fixable:
             print(f"  → {c.name}")
             c.auto_install()
             print()
 
     if manual:
-        print("請手動安裝以下項目後再重試:\n")
+        print(t("請手動安裝以下項目後再重試:\n", "Please install these manually, then re-run:\n"))
         for c in manual:
             print(f"  • {c.name}: {c.fix_command}")
         return False
 
-    # Re-check
     after = [c for c in _all_checks(headers_path, youtube_cookies_path) if c.name in required_names]
     still_missing = [c for c in after if not c.ok]
     if still_missing:
-        print("自動安裝後仍有問題:\n")
+        print(t("自動安裝後仍有問題:\n", "Some items still failing after auto-install:\n"))
         for c in still_missing:
             print(f"  • {c.name}: {c.fix_command}")
         return False
 
-    print(f"{GREEN_CHECK} 設定完成。\n")
+    print(t(f"{GREEN_CHECK} 設定完成。\n", f"{GREEN_CHECK} Setup complete.\n"))
     return True

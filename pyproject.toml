@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ntu-cool-material"
-version = "0.1.15"
+version = "0.1.16"
 description = "One-command bulk downloader for NTU COOL (Canvas) course materials — PDFs, lecture videos, and Pages."
 readme = "README.md"
 license = "MIT"

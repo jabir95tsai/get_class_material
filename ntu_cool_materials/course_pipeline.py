@@ -32,6 +32,7 @@ from typing import Any
 
 from .announcements import html_to_text
 from .canvas_client import NoRedirectHandler
+from .i18n import t
 from .media_naming import build_video_title_map, extract_youtube_ids, rename_downloaded_videos, sanitize_teacher_title
 from .session_client import DROP_REQUEST_HEADER_NAMES, CanvasSessionClient
 from .storage import course_directory_name
@@ -752,9 +753,12 @@ def download_course(
 
     try:
         plan = plan_course(client, course_id, output_dir)
-        print(f"課程: {plan.course.get('name')!r}")
-        print(f"存放位置: {plan.course_dir}")
-        print(f"有教材的週次: {[w.label for w in plan.weeks]}")
+        print(t(f"課程: {plan.course.get('name')!r}", f"Course: {plan.course.get('name')!r}"))
+        print(t(f"存放位置: {plan.course_dir}", f"Output: {plan.course_dir}"))
+        print(t(
+            f"有教材的週次: {[w.label for w in plan.weeks]}",
+            f"Weeks with content: {[w.label for w in plan.weeks]}",
+        ))
 
         course_stats = CourseStats()
 
@@ -783,29 +787,36 @@ def download_course(
                 return stage_fn(client)
 
         if not skip_pdfs:
-            print("\n[1/4] PDF 檔案")
+            print(t("\n[1/4] PDF 檔案", "\n[1/4] PDFs / Files"))
             course_stats.pdfs = _run_with_session_retry(
-                lambda c: download_files(plan, c), "PDF"
+                lambda c: download_files(plan, c), t("PDF", "files")
             )
-            print(f"  下載 {course_stats.pdfs.done}、跳過 {course_stats.pdfs.skipped}、"
-                  f"失敗 {len(course_stats.pdfs.failed)}")
+            print(t(
+                f"  下載 {course_stats.pdfs.done}、跳過 {course_stats.pdfs.skipped}、失敗 {len(course_stats.pdfs.failed)}",
+                f"  downloaded {course_stats.pdfs.done}, skipped {course_stats.pdfs.skipped}, failed {len(course_stats.pdfs.failed)}",
+            ))
         if not skip_pages:
-            print("\n[2/4] Page 內容")
+            print(t("\n[2/4] Page 內容", "\n[2/4] Pages"))
             course_stats.pages = _run_with_session_retry(
-                lambda c: save_pages(plan, c, course_id), "Page"
+                lambda c: save_pages(plan, c, course_id), t("Page", "pages")
             )
-            print(f"  儲存 {course_stats.pages.done}、跳過 {course_stats.pages.skipped}、"
-                  f"失敗 {len(course_stats.pages.failed)}")
+            print(t(
+                f"  儲存 {course_stats.pages.done}、跳過 {course_stats.pages.skipped}、失敗 {len(course_stats.pages.failed)}",
+                f"  saved {course_stats.pages.done}, skipped {course_stats.pages.skipped}, failed {len(course_stats.pages.failed)}",
+            ))
         if not skip_youtube:
-            print("\n[3/4] YouTube 影片")
+            print(t("\n[3/4] YouTube 影片", "\n[3/4] YouTube videos"))
             if yt_cookies is None or not yt_cookies.exists():
-                print(f"  注意: 找不到 YouTube cookies ({yt_cookies}),不公開影片可能下載失敗")
+                print(t(
+                    f"  注意: 找不到 YouTube cookies ({yt_cookies}),不公開影片可能下載失敗",
+                    f"  WARNING: youtube cookies not found at {yt_cookies} — unlisted videos may fail",
+                ))
             course_stats.youtube = download_youtube(
                 plan, cookies_path=yt_cookies or Path(".secrets/youtube_cookies.txt"), yt_dlp=yt_dlp
             )
 
         if not skip_cool_videos:
-            print("\n[4/4] NTU 上課影片 (cool-video)")
+            print(t("\n[4/4] NTU 上課影片 (cool-video)", "\n[4/4] NTU CDN videos (cool-video)"))
             if browser is not None:
                 course_stats.cool_videos = capture_and_download_cool_videos_in_page(
                     plan, browser.page, browser.captured,
@@ -820,32 +831,31 @@ def download_course(
         # Per-course overview at the course root.
         try:
             overview_path = _write_course_overview(plan)
-            print(f"\n  目錄: {overview_path.name}")
+            print(t(f"\n  目錄: {overview_path.name}", f"\n  overview: {overview_path.name}"))
         except Exception as exc:
-            print(f"\n  (無法產生目錄: {exc})")
+            print(t(f"\n  (無法產生目錄: {exc})", f"\n  (could not write overview: {exc})"))
 
         # Summary
         print("\n" + "=" * 60)
-        print("完成。")
-        print(f"  PDF:        新增 {course_stats.pdfs.done}、"
-              f"跳過 {course_stats.pdfs.skipped}、"
-              f"失敗 {len(course_stats.pdfs.failed)}")
-        print(f"  Page:       新增 {course_stats.pages.done}、"
-              f"跳過 {course_stats.pages.skipped}、"
-              f"失敗 {len(course_stats.pages.failed)}")
-        print(f"  YouTube:    新增 {course_stats.youtube.done}、"
-              f"跳過 {course_stats.youtube.skipped}、"
-              f"失敗 {len(course_stats.youtube.failed)}")
-        print(f"  上課影片:   新增 {course_stats.cool_videos.done}、"
-              f"跳過 {course_stats.cool_videos.skipped}、"
-              f"失敗 {len(course_stats.cool_videos.failed)}")
+        print(t("完成。", "Done."))
+        def _row(label_zh: str, label_en: str, s: StageStats) -> None:
+            line_zh = f"  {label_zh}  新增 {s.done}、跳過 {s.skipped}、失敗 {len(s.failed)}"
+            line_en = f"  {label_en}  {s.done} new, {s.skipped} skipped, {len(s.failed)} failed"
+            print(t(line_zh, line_en))
+        _row("PDF:       ", "PDFs:        ", course_stats.pdfs)
+        _row("Page:      ", "Pages:       ", course_stats.pages)
+        _row("YouTube:   ", "YouTube:     ", course_stats.youtube)
+        _row("上課影片:  ", "Cool-video:  ", course_stats.cool_videos)
         all_failures = (course_stats.pdfs.failed + course_stats.pages.failed
                         + course_stats.youtube.failed + course_stats.cool_videos.failed)
         if all_failures:
-            print(f"\n失敗清單 ({len(all_failures)} 筆):")
+            print(t(f"\n失敗清單 ({len(all_failures)} 筆):", f"\nFailures ({len(all_failures)}):"))
             for f in all_failures:
                 print(f"  ✗ {f}")
-        print(f"\n檔案存放位置:\n  {plan.course_dir.resolve()}")
+        print(t(
+            f"\n檔案存放位置:\n  {plan.course_dir.resolve()}",
+            f"\nFiles saved to:\n  {plan.course_dir.resolve()}",
+        ))
         return plan
     finally:
         if owns_browser and browser is not None:
