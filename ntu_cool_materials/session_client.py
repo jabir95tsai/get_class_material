@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .canvas_client import CanvasAPIError, parse_link_header
+from .canvas_client import CanvasAPIError, SessionExpiredError, parse_link_header
 
 
 SENSITIVE_HEADER_NAMES = {"cookie", "authorization", "x-csrf-token"}
@@ -207,4 +207,6 @@ class CanvasSessionClient:
         message = f"Canvas session request failed with HTTP {exc.code} for {url}"
         if detail:
             message = f"{message}: {detail[:500]}"
+        if exc.code == 401:
+            return SessionExpiredError(message)
         return CanvasAPIError(message, status_code=exc.code)

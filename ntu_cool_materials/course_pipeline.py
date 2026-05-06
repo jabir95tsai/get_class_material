@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from .announcements import html_to_text
-from .canvas_client import NoRedirectHandler
+from .canvas_client import NoRedirectHandler, SessionExpiredError
 from .i18n import t
 from .media_naming import build_video_title_map, extract_youtube_ids, rename_downloaded_videos, sanitize_teacher_title
 from .session_client import DROP_REQUEST_HEADER_NAMES, CanvasSessionClient
@@ -89,10 +89,6 @@ class CourseStats:
     pages: StageStats = field(default_factory=StageStats)
     youtube: StageStats = field(default_factory=StageStats)
     cool_videos: StageStats = field(default_factory=StageStats)
-
-
-class SessionExpiredError(RuntimeError):
-    """Raised when a Canvas request comes back 401/403 mid-pipeline."""
 
 
 # ---- planning ----
@@ -820,7 +816,49 @@ def download_course(
         client = _build_session_client_from_file(headers_path, base_url)
 
     try:
-        plan = plan_course(client, course_id, output_dir)
+        course_stats = CourseStats()
+
+        def _try_recover_session() -> bool:
+            """Refresh SSO + cookies if we have a Playwright session. Returns True on success."""
+            nonlocal client
+            if browser is None:
+                print(t(
+                    "  → 無法自動重新登入(沒有開啟瀏覽器)。請重新執行並加上 --refresh-session。",
+                    "  → can't auto-recover (no browser open). Please re-run with --refresh-session.",
+                ))
+                return False
+            print(t(
+                "  → NTU COOL 登入已過期,在同一個瀏覽器重新登入...",
+                "  → NTU COOL session expired, re-authenticating in the open browser...",
+            ))
+            if not _ensure_logged_in(browser.page, course_id, sso_timeout_sec):
+                return False
+            if not _dump_cookies_to_headers_file(browser.context, headers_path):
+                return False
+            client = _build_session_client_from_file(headers_path, base_url)
+            print(t("  ✓ 重新登入完成,重試此階段", "  ✓ session refreshed, retrying"))
+            return True
+
+        def _api_call_with_session_retry(fn, label: str):
+            """Run fn(client). If it raises SessionExpiredError, try to refresh
+            the login once and retry. Used for any API call that touches
+            cool.ntu.edu.tw — list_modules, get_course, files, pages, etc."""
+            try:
+                return fn(client)
+            except SessionExpiredError as exc:
+                print(t(f"  ⚠ {label}: {exc}", f"  ⚠ {label}: {exc}"))
+                if not _try_recover_session():
+                    raise
+                return fn(client)
+
+        # plan_course hits the Canvas API (get_course + list_modules); if the
+        # session expired between list_courses (in cli.py) and now, this is
+        # where we'd see the 401. Wrap it in the same retry helper as the
+        # download stages.
+        plan = _api_call_with_session_retry(
+            lambda c: plan_course(c, course_id, output_dir),
+            t("plan", "plan"),
+        )
         print(t(f"課程: {plan.course.get('name')!r}", f"Course: {plan.course.get('name')!r}"))
         print(t(f"存放位置: {plan.course_dir}", f"Output: {plan.course_dir}"))
         print(t(
@@ -828,31 +866,8 @@ def download_course(
             f"Weeks with content: {[w.label for w in plan.weeks]}",
         ))
 
-        course_stats = CourseStats()
-
-        def _try_recover_session() -> bool:
-            """Refresh SSO + cookies if we have a Playwright session. Returns True on success."""
-            nonlocal client
-            if browser is None:
-                print("  → 無法自動重新登入(沒有開啟瀏覽器)。請重新執行並加上 --refresh-session。")
-                return False
-            print("  → NTU COOL 登入已過期,在同一個瀏覽器重新登入...")
-            if not _ensure_logged_in(browser.page, course_id, sso_timeout_sec):
-                return False
-            if not _dump_cookies_to_headers_file(browser.context, headers_path):
-                return False
-            client = _build_session_client_from_file(headers_path, base_url)
-            print("  ✓ 重新登入完成,重試此階段")
-            return True
-
         def _run_with_session_retry(stage_fn, label: str) -> StageStats:
-            try:
-                return stage_fn(client)
-            except SessionExpiredError as exc:
-                print(f"  ⚠ {label}: {exc}")
-                if not _try_recover_session():
-                    raise
-                return stage_fn(client)
+            return _api_call_with_session_retry(stage_fn, label)
 
         if not skip_pdfs:
             print(t("\n[1/4] PDF 檔案", "\n[1/4] PDFs / Files"))

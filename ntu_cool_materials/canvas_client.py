@@ -29,6 +29,19 @@ class CanvasAPIError(RuntimeError):
         self.status_code = status_code
 
 
+class SessionExpiredError(CanvasAPIError):
+    """Raised when Canvas returns 401 — the saved login is no longer valid.
+
+    Callers should catch this specifically to trigger a re-authentication
+    flow rather than just bubbling the error up to the user. Subclasses
+    CanvasAPIError so existing `except CanvasAPIError` blocks continue to
+    catch it; `status_code` is fixed at 401.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, status_code=401)
+
+
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         return None
@@ -273,4 +286,6 @@ class CanvasClient:
         message = f"Canvas request failed with HTTP {exc.code} for {url}"
         if detail:
             message = f"{message}: {detail[:500]}"
+        if exc.code == 401:
+            return SessionExpiredError(message)
         return CanvasAPIError(message, status_code=exc.code)
