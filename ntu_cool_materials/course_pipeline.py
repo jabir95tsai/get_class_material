@@ -177,19 +177,29 @@ def _session_headers(client: CanvasSessionClient) -> dict[str, str]:
     return h
 
 
-def _stream_with_progress(resp, target: Path, label: str) -> None:
-    """Read `resp` into `target` while printing an inline progress bar."""
+def _stream_with_progress(
+    resp, target: Path, label: str,
+    *, append: bool = False, starting_from: int = 0,
+) -> None:
+    """Read `resp` into `target` while printing an inline progress bar.
+
+    When `append=True` and `starting_from > 0`, opens the .part file in append
+    mode and accounts for already-downloaded bytes in the progress display
+    (used for HTTP Range resume after a partial download).
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(target.name + ".part")
-    total = 0
     try:
-        total = int(resp.headers.get("Content-Length") or 0)
+        new_bytes = int(resp.headers.get("Content-Length") or 0)
     except (TypeError, ValueError):
-        total = 0
-    downloaded = 0
+        new_bytes = 0
+    total = starting_from + new_bytes
+    downloaded = starting_from
     last_print = 0.0
     bar_len = 28
-    with tmp.open("wb") as f:
+    mode = "ab" if append else "wb"
+    label_suffix = "  (resuming)" if append and starting_from else ""
+    with tmp.open(mode) as f:
         while True:
             chunk = resp.read(1024 * 1024)
             if not chunk:
@@ -204,11 +214,11 @@ def _stream_with_progress(resp, target: Path, label: str) -> None:
                     bar = "#" * filled + "-" * (bar_len - filled)
                     sys.stdout.write(
                         f"\r      [{bar}] {pct:3d}%  "
-                        f"{downloaded/1024/1024:6.1f} / {total/1024/1024:6.1f} MB  {label}   "
+                        f"{downloaded/1024/1024:6.1f} / {total/1024/1024:6.1f} MB  {label}{label_suffix}   "
                     )
                 else:
                     sys.stdout.write(
-                        f"\r      {downloaded/1024/1024:6.1f} MB  {label}   "
+                        f"\r      {downloaded/1024/1024:6.1f} MB  {label}{label_suffix}   "
                     )
                 sys.stdout.flush()
                 last_print = now
@@ -217,13 +227,26 @@ def _stream_with_progress(resp, target: Path, label: str) -> None:
     tmp.replace(target)
 
 
+def _resume_offset_for(target: Path) -> int:
+    """How many bytes are already in the .part file (0 if no partial)."""
+    tmp = target.with_name(target.name + ".part")
+    try:
+        return tmp.stat().st_size
+    except OSError:
+        return 0
+
+
 def _download_canvas_file(file_id: str, target: Path, headers: dict[str, str]) -> None:
+    """Download a Canvas File via the redirect chain to S3, with HTTP Range resume."""
     opener = urllib.request.build_opener(NoRedirectHandler)
     current = f"https://{CANVAS_NETLOC}/files/{file_id}/download?download_frd=1"
+    resume_from = _resume_offset_for(target)
 
     for _ in range(10):
         parsed = urllib.parse.urlparse(current)
         h = dict(headers) if parsed.netloc.lower() == CANVAS_NETLOC else {"User-Agent": "ntu-cool-materials/0.1"}
+        if resume_from > 0:
+            h["Range"] = f"bytes={resume_from}-"
         req = urllib.request.Request(current, headers=h)
         try:
             resp = opener.open(req, timeout=120)
@@ -232,18 +255,43 @@ def _download_canvas_file(file_id: str, target: Path, headers: dict[str, str]) -
             if exc.code in {301, 302, 303, 307, 308}:
                 current = urllib.parse.urljoin(current, exc.headers["Location"])
                 continue
+            if exc.code == 416 and resume_from > 0:
+                # .part is at-or-past full size — discard and start fresh.
+                target.with_name(target.name + ".part").unlink(missing_ok=True)
+                resume_from = 0
+                continue
             raise
     else:
         raise RuntimeError(f"too many redirects for file {file_id}")
 
     with resp:
-        _stream_with_progress(resp, target, target.name)
+        is_partial = (resp.status == 206)
+        _stream_with_progress(
+            resp, target, target.name,
+            append=is_partial, starting_from=resume_from if is_partial else 0,
+        )
 
 
 def _download_signed_url(url: str, target: Path) -> None:
-    req = urllib.request.Request(url, headers={"User-Agent": "ntu-cool-materials/0.1"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        _stream_with_progress(resp, target, target.name)
+    """Download a signed S3 URL with HTTP Range resume."""
+    resume_from = _resume_offset_for(target)
+    headers = {"User-Agent": "ntu-cool-materials/0.1"}
+    if resume_from > 0:
+        headers["Range"] = f"bytes={resume_from}-"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        resp = urllib.request.urlopen(req, timeout=120)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 416 and resume_from > 0:
+            target.with_name(target.name + ".part").unlink(missing_ok=True)
+            return _download_signed_url(url, target)
+        raise
+    with resp:
+        is_partial = (resp.status == 206)
+        _stream_with_progress(
+            resp, target, target.name,
+            append=is_partial, starting_from=resume_from if is_partial else 0,
+        )
 
 
 # ---- per-stage workers ----

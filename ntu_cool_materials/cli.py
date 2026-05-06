@@ -312,6 +312,30 @@ def _close_parent_terminal_on_quit() -> None:
         pass
 
 
+def _maybe_set_up_youtube_cookies(cookies_path: Path) -> None:
+    """If the user has no YouTube cookies, offer to set them up inline.
+    Skips silently when stdin isn't a tty (piped input / tests)."""
+    if cookies_path.exists():
+        return
+    if not sys.stdin.isatty():
+        return
+    print("\n尚未設定 YouTube cookies。下載「不公開」(unlisted) 影片需要這個。")
+    print("(若你只下載 PDF 或 Page 可以跳過)")
+    try:
+        ans = input("現在設定嗎？會跳出瀏覽器讓你登入 Google 帳號 [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if ans not in {"y", "yes"}:
+        return
+    try:
+        from .youtube_cookies import export_youtube_cookies
+        result = export_youtube_cookies(cookies_path=cookies_path)
+        print(f"  ✓ saved {result.cookie_count} cookies to {result.cookies_path}")
+    except Exception as exc:
+        print(f"  YouTube cookies 設定失敗: {exc}")
+        print("  (你之後可以隨時跑 `youtube-cookies` 重試)")
+
+
 def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     """Interactive course picker → download_course.
 
@@ -323,6 +347,8 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     youtube_cookies = Path(args.youtube_cookies)
     if not ensure_ready(headers_path=headers_path, youtube_cookies_path=youtube_cookies):
         return 1
+    if not args.skip_youtube:
+        _maybe_set_up_youtube_cookies(youtube_cookies)
     browser: BrowserSession | None = None
     if args.refresh_session or not headers_path.exists():
         if not headers_path.exists() and not args.refresh_session:
