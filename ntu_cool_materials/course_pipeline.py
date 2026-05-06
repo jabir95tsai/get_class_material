@@ -367,7 +367,8 @@ def download_youtube(plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-
         cmd = [
             yt_dlp, *YT_DLP_BASE_ARGS,
             "--cookies", str(cookies_path),
-            "--newline",
+            # No --newline: let yt-dlp use \r so the progress bar refreshes
+            # in place on a single line instead of spamming the terminal.
             "-P", str(videos_dir),
             "-o", "%(id)s_%(title).120s.%(ext)s",
             "-a", str(urls_file),
