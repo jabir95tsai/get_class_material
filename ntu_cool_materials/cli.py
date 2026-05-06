@@ -419,9 +419,6 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     immediately after `pip install ntu-cool-material` without other steps.
     """
     set_lang(args.lang)
-    if get_lang() == "zh":
-        # One-line hint so English speakers know the option exists.
-        print("(English UI: ntu-cool-gcm --lang en)")
     headers_path = Path(args.headers_file)
     youtube_cookies = Path(args.youtube_cookies)
     if not ensure_ready(headers_path=headers_path, youtube_cookies_path=youtube_cookies):
@@ -649,18 +646,22 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         while True:
             try:
                 raw = input(t(
-                    f"\n選擇課程 (1-{n}, h = 歷史課程, a = 下載全部, q = 離開)\n> ",
-                    f"\nPick course (1-{n}, h = past courses, a = all, q = quit)\n> ",
+                    f"\n選擇課程 (1-{n}, h = 歷史課程, a = 下載全部, en = English, q = 離開)\n> ",
+                    f"\nPick course (1-{n}, h = past courses, a = all, zh = 中文, q = quit)\n> ",
                 )).strip()
             except (EOFError, KeyboardInterrupt):
                 raise _UserQuit()
             cmd = raw.lower()
             if cmd in {"q", "quit", "exit", ""}:
                 raise _UserQuit()
+            if cmd in {"en", "zh"} and cmd != get_lang():
+                set_lang(cmd)
+                _print_course_list()
+                continue
             if cmd in {"a", "all"}:
                 return list(courses)
             if cmd in {"h", "history"}:
-                chosen = _pick_historical_course()  # may raise _UserQuit
+                chosen = _pick_historical_course()
                 if chosen is not None:
                     return [chosen]
                 _print_course_list()
@@ -672,8 +673,8 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                 return [courses[idx]]
             except (ValueError, IndexError):
                 print(t(
-                    f"無效輸入: {raw!r}。請輸入 1-{n}、h、a、或 q。",
-                    f"Invalid choice: {raw!r}. Enter 1-{n}, h, a, or q.",
+                    f"無效輸入: {raw!r}。請輸入 1-{n}、h、a、en、或 q。",
+                    f"Invalid choice: {raw!r}. Enter 1-{n}, h, a, zh, or q.",
                 ))
 
     def _download_each(targets: list[dict[str, Any]]) -> None:
@@ -696,14 +697,17 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             while True:
                 try:
                     raw = input(t(
-                        "\n下一個動作: c = 繼續下載別的 / a = 下載全部 / h = 歷史課程 / q = 離開\n> ",
-                        "\nNext: c = pick another / a = all / h = past courses / q = quit\n> ",
+                        "\n下一個動作: c = 繼續下載別的 / a = 下載全部 / h = 歷史課程 / en = English / q = 離開\n> ",
+                        "\nNext: c = pick another / a = all / h = past courses / zh = 中文 / q = quit\n> ",
                     )).strip()
                 except (EOFError, KeyboardInterrupt):
                     return _quit()
                 cmd = raw.lower()
                 if cmd in {"q", "quit", "exit", ""}:
                     return _quit()
+                if cmd in {"en", "zh"} and cmd != get_lang():
+                    set_lang(cmd)
+                    continue
                 if cmd in {"a", "all"}:
                     _download_each(list(courses))
                     continue
@@ -716,8 +720,8 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                         _wrap_download(chosen)
                     continue
                 print(t(
-                    f"無效輸入: {raw!r}。請輸入 c、a、h、或 q。",
-                    f"Invalid choice: {raw!r}. Enter c, a, h, or q.",
+                    f"無效輸入: {raw!r}。請輸入 c、a、h、en、或 q。",
+                    f"Invalid choice: {raw!r}. Enter c, a, h, zh, or q.",
                 ))
         except _UserQuit:
             return _quit()
