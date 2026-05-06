@@ -555,11 +555,11 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         try:
             historical = client.list_courses(enrollment_state="completed")
         except CanvasAPIError as exc:
-            print(t(f"無法取得歷史課程: {exc}", f"Could not fetch past courses: {exc}"))
+            print(t(f"無法取得過去課程: {exc}", f"Could not fetch past courses: {exc}"))
             return None
         historical = [c for c in historical if c.get("name") or c.get("course_code")]
         if not historical:
-            print(t("找不到任何已結束的課程。", "No past courses found."))
+            print(t("找不到任何過去的課程。", "No past courses found."))
             return None
 
         groups: dict[str, list[dict[str, Any]]] = {}
@@ -573,7 +573,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
 
         while True:  # semester picker (re-entered if course-level user picks 'b')
             print(t(
-                f"\n找到 {len(historical)} 門已結束課程,分布在 {len(term_names)} 個學期:\n",
+                f"\n找到 {len(historical)} 門過去課程,分布在 {len(term_names)} 個學期:\n",
                 f"\nFound {len(historical)} past course(s) across {len(term_names)} semester(s):\n",
             ))
             for i, name in enumerate(term_names, 1):
@@ -667,7 +667,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         while True:
             try:
                 raw = input(t(
-                    f"\n選擇課程 (1-{n} 可空格多選如 \"1 3 5\", h = 歷史課程, a = 下載全部, en = English, q = 離開)\n> ",
+                    f"\n選擇課程 (1-{n} 可空格多選如 \"1 3 5\", h = 過去課程, a = 下載全部, en = English, q = 離開)\n> ",
                     f"\nPick course(s) (1-{n} space-separated for multi like \"1 3 5\", h = past, a = all, zh = 中文, q = quit)\n> ",
                 )).strip()
             except (EOFError, KeyboardInterrupt):
@@ -715,7 +715,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             while True:
                 try:
                     raw = input(t(
-                        "\n下一個動作: c = 繼續下載別的 / a = 下載全部 / h = 歷史課程 / en = English / q = 離開\n> ",
+                        "\n下一個動作: c = 繼續下載別的 / a = 下載全部 / h = 過去課程 / en = English / q = 離開\n> ",
                         "\nNext: c = pick another / a = all / h = past courses / zh = 中文 / q = quit\n> ",
                     )).strip()
                 except (EOFError, KeyboardInterrupt):
