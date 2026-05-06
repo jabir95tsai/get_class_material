@@ -499,11 +499,11 @@ def download_youtube(plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-
         rename_downloaded_videos(week_items=week_items, videos_dir=videos_dir)
         # Count how many of the expected titles are now on disk to derive done/failed.
         existing_after = {p.stem for p in videos_dir.glob("*.mp4")}
-        for t in expected_titles:
-            if t in existing_after and t not in existing:
+        for title in expected_titles:
+            if title in existing_after and title not in existing:
                 stats.done += 1
-            elif t not in existing_after:
-                stats.failed.append(f"{week.label}/{t}.mp4 (yt-dlp could not download)")
+            elif title not in existing_after:
+                stats.failed.append(f"{week.label}/{title}.mp4 (yt-dlp could not download)")
     return stats
 
 
