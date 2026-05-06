@@ -329,16 +329,20 @@ def _close_parent_terminal_on_quit() -> None:
     Skipped when stdin isn't a tty (piped input / tests) so we never kill the
     caller's shell unintentionally.
 
-    Why we kill the GRANDPARENT, not the parent: pip's console-script entry
-    point on Windows is a `ntu-cool-gcm.exe` wrapper that sits between Python
-    and the shell. So our process tree looks like:
-      powershell.exe  ←  the terminal we want to close
+    Implementation note: previous attempts spawned `cmd /c timeout && taskkill`
+    detached, which briefly flashed two console windows. This version calls
+    `TerminateProcess` directly via Win32 — no subprocess, no flashes, no cmd.
+    The shell dies immediately; ConPTY / Windows Terminal notice and close
+    the tab. Our own Python process dies along with the shell (we're its
+    grandchild), but by this point we've already printed 'Bye.' and have
+    nothing left to do.
+
+    We target the GRANDPARENT (parent of os.getppid()), because pip's
+    console-script wrapper on Windows is a `ntu-cool-gcm.exe` shim sitting
+    between Python and the shell:
+      powershell.exe  ←  what we kill
         └─ ntu-cool-gcm.exe   (= os.getppid())
             └─ python.exe     (= os.getpid())
-    Killing os.getppid() kills the wrapper but the shell stays alive (which is
-    what shipped in v0.1.6/v0.1.8 and silently failed). We need to walk up one
-    more level and kill the shell. When the shell dies, Windows Terminal /
-    conhost notices and closes the tab/window.
     """
     if os.name != "nt":
         return
@@ -348,13 +352,17 @@ def _close_parent_terminal_on_quit() -> None:
         wrapper_pid = os.getppid()
         shell_pid = _windows_parent_pid_of(wrapper_pid)
         target_pid = shell_pid or wrapper_pid
-        DETACHED_PROCESS = 0x00000008
-        # Detached so the kill happens after we've exited cleanly.
-        subprocess.Popen(
-            ["cmd", "/c", f"timeout /t 1 /nobreak >nul && taskkill /F /PID {target_pid}"],
-            creationflags=DETACHED_PROCESS,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        if not target_pid:
+            return
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_TERMINATE = 0x0001
+        handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, int(target_pid))
+        if handle:
+            try:
+                kernel32.TerminateProcess(handle, 0)
+            finally:
+                kernel32.CloseHandle(handle)
     except Exception:
         pass
 
