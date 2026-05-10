@@ -304,9 +304,24 @@ def download_files(plan: CoursePlan, client: CanvasSessionClient) -> StageStats:
                 continue
             file_id = str(item.get("content_id") or "")
             title = str(item.get("title") or "").strip() or f"item-{item.get('id')}"
-            stem = title[:-4] if title.lower().endswith(".pdf") else title
+
+            # Determine the actual file extension. Prefer Canvas's display_name
+            # in content_details (which is the original uploaded filename and
+            # carries the real extension — .pdf, .pptx, .docx, .xlsx, .zip,
+            # etc.). Fall back to the title's suffix, then ".pdf" as last resort.
+            content_details = item.get("content_details") or {}
+            display_name = str(content_details.get("display_name") or "")
+            ext = Path(display_name).suffix.lower() if display_name else ""
+            if not ext:
+                ext = Path(title).suffix.lower()
+            if not ext:
+                ext = ".pdf"
+
+            # Strip the matching extension from the title (case-insensitive) so
+            # we don't end up with "lecture.pptx.pptx" or "syllabus.pdf.pdf".
+            stem = title[:-len(ext)] if title.lower().endswith(ext) else title
             safe_title = sanitize_teacher_title(stem)
-            target = week.week_dir / f"{safe_title}.pdf"
+            target = week.week_dir / f"{safe_title}{ext}"
             if target.exists():
                 stats.skipped += 1
                 continue
