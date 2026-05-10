@@ -294,8 +294,16 @@ def _download_signed_url(url: str, target: Path) -> None:
 
 # ---- per-stage workers ----
 
-def download_files(plan: CoursePlan, client: CanvasSessionClient) -> StageStats:
-    """Download every File-type module item directly into the week directory."""
+def download_files(
+    plan: CoursePlan, client: CanvasSessionClient, *, all_file_types: bool = False,
+) -> StageStats:
+    """Download every File-type module item directly into the week directory.
+
+    By default only PDFs are downloaded — most NTU course material is PDF
+    lecture slides / syllabi, and renaming a non-PDF file to .pdf (which
+    earlier versions did) breaks the file. Pass `all_file_types=True` to
+    also pull .docx / .pptx / .xlsx / .zip / etc. attachments.
+    """
     headers = _session_headers(client)
     stats = StageStats()
     for week in plan.weeks:
@@ -316,6 +324,16 @@ def download_files(plan: CoursePlan, client: CanvasSessionClient) -> StageStats:
                 ext = Path(title).suffix.lower()
             if not ext:
                 ext = ".pdf"
+
+            # Default behavior: skip anything that isn't a PDF unless the user
+            # opted in to all file types.
+            if not all_file_types and ext != ".pdf":
+                stats.skipped += 1
+                print(t(
+                    f"  [{week.label}/file] 跳過 {display_name or title} (非 PDF;加 --all-file-types 才會下載)",
+                    f"  [{week.label}/file] skipping {display_name or title} (not a PDF; pass --all-file-types to include it)",
+                ))
+                continue
 
             # Strip the matching extension from the title (case-insensitive) so
             # we don't end up with "lecture.pptx.pptx" or "syllabus.pdf.pdf".
@@ -808,6 +826,7 @@ def download_course(
     headless: bool = False,
     skip_pdfs: bool = False, skip_pages: bool = False,
     skip_youtube: bool = False, skip_cool_videos: bool = False,
+    all_file_types: bool = False,
     sso_timeout_sec: int = 600,
 ) -> CoursePlan:
     """Top-level orchestrator. Opens at most ONE Playwright context for the entire run.
@@ -887,7 +906,7 @@ def download_course(
         if not skip_pdfs:
             print(t("\n[1/4] PDF 檔案", "\n[1/4] PDFs / Files"))
             course_stats.pdfs = _run_with_session_retry(
-                lambda c: download_files(plan, c), t("PDF", "files")
+                lambda c: download_files(plan, c, all_file_types=all_file_types), t("PDF", "files")
             )
             print(t(
                 f"  下載 {course_stats.pdfs.done}、跳過 {course_stats.pdfs.skipped}、失敗 {len(course_stats.pdfs.failed)}",

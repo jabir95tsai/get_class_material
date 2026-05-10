@@ -180,6 +180,12 @@ def _build_parser() -> argparse.ArgumentParser:
     pick.add_argument("--skip-youtube", action="store_true")
     pick.add_argument("--skip-cool-videos", action="store_true")
     pick.add_argument(
+        "--all-file-types", action="store_true",
+        help="Also download non-PDF files (.docx / .pptx / .xlsx / .zip / etc.). "
+             "Default skips them so a friend's .doc that breaks when force-renamed "
+             "to .pdf doesn't show up unsolicited.",
+    )
+    pick.add_argument(
         "--keep-terminal", action="store_true",
         help="Don't close the PowerShell window on quit (Windows only).",
     )
@@ -220,6 +226,10 @@ def _build_parser() -> argparse.ArgumentParser:
     course.add_argument("--skip-pages", action="store_true")
     course.add_argument("--skip-youtube", action="store_true")
     course.add_argument("--skip-cool-videos", action="store_true")
+    course.add_argument(
+        "--all-file-types", action="store_true",
+        help="Also download non-PDF files (.docx / .pptx / .xlsx / .zip / etc.).",
+    )
 
     sync = subparsers.add_parser("sync", help="Download course files and module metadata.")
     sync.add_argument("--state", default="active", help="Canvas enrollment_state filter.")
@@ -523,6 +533,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                 skip_pages=args.skip_pages,
                 skip_youtube=args.skip_youtube,
                 skip_cool_videos=args.skip_cool_videos,
+                all_file_types=args.all_file_types,
             )
         except RuntimeError as exc:
             print(t(f"下載失敗: {exc}", f"download failed: {exc}"))
@@ -809,6 +820,7 @@ def _cmd_download_course(base_url: str, args: argparse.Namespace) -> int:
             skip_pages=args.skip_pages,
             skip_youtube=args.skip_youtube,
             skip_cool_videos=args.skip_cool_videos,
+            all_file_types=args.all_file_types,
         )
         return 0
     except RuntimeError as exc:
