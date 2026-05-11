@@ -294,18 +294,35 @@ def _download_signed_url(url: str, target: Path) -> None:
 
 # ---- per-stage workers ----
 
+_KNOWN_FILE_EXTS = {
+    ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".csv",
+    ".zip", ".rar", ".7z", ".tar", ".gz",
+    ".txt", ".md", ".rtf",
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp",
+    ".mp3", ".wav", ".m4a",
+    ".mp4", ".mov", ".avi", ".mkv",
+}
+
+
 def download_files(
     plan: CoursePlan, client: CanvasSessionClient, *, all_file_types: bool = False,
 ) -> StageStats:
     """Download every File-type module item directly into the week directory.
 
-    By default only PDFs are downloaded — most NTU course material is PDF
-    lecture slides / syllabi, and renaming a non-PDF file to .pdf (which
-    earlier versions did) breaks the file. Pass `all_file_types=True` to
-    also pull .docx / .pptx / .xlsx / .zip / etc. attachments.
+    Default: download every file but save with .pdf extension regardless of
+    the original type. Most NTU course material is PDF, so this gives a
+    uniform-looking output. Files that aren't really PDF (.docx, .xlsx, .zip,
+    etc.) still download fine — they just sit on disk with a .pdf extension.
+    Most apps still open them (Excel/Word sniff the binary), but if anything
+    won't open, re-run with `all_file_types=True` to get the real extensions.
+
+    With `all_file_types=True`, every file keeps its original extension
+    (.pdf / .docx / .pptx / .xlsx / .zip / etc.) — the cleanest behavior but
+    means the output isn't uniformly .pdf.
     """
     headers = _session_headers(client)
     stats = StageStats()
+    forced_pdf_count = 0
     for week in plan.weeks:
         for item in week.items:
             if item.get("type") != "File":
@@ -313,33 +330,30 @@ def download_files(
             file_id = str(item.get("content_id") or "")
             title = str(item.get("title") or "").strip() or f"item-{item.get('id')}"
 
-            # Determine the actual file extension. Prefer Canvas's display_name
-            # in content_details (which is the original uploaded filename and
-            # carries the real extension — .pdf, .pptx, .docx, .xlsx, .zip,
-            # etc.). Fall back to the title's suffix, then ".pdf" as last resort.
+            # Real extension for this file: prefer Canvas's display_name in
+            # content_details, fall back to the title's suffix.
             content_details = item.get("content_details") or {}
             display_name = str(content_details.get("display_name") or "")
-            ext = Path(display_name).suffix.lower() if display_name else ""
-            if not ext:
-                ext = Path(title).suffix.lower()
-            if not ext:
-                ext = ".pdf"
+            real_ext = Path(display_name).suffix.lower() if display_name else ""
+            if not real_ext:
+                real_ext = Path(title).suffix.lower()
 
-            # Default behavior: skip anything that isn't a PDF unless the user
-            # opted in to all file types.
-            if not all_file_types and ext != ".pdf":
-                stats.skipped += 1
-                print(t(
-                    f"  [{week.label}/file] 跳過 {display_name or title} (非 PDF;加 --all-file-types 才會下載)",
-                    f"  [{week.label}/file] skipping {display_name or title} (not a PDF; pass --all-file-types to include it)",
-                ))
-                continue
+            # Decide what extension to use ON DISK.
+            if all_file_types:
+                use_ext = real_ext or ".pdf"
+            else:
+                use_ext = ".pdf"
+                if real_ext and real_ext != ".pdf":
+                    forced_pdf_count += 1
 
-            # Strip the matching extension from the title (case-insensitive) so
-            # we don't end up with "lecture.pptx.pptx" or "syllabus.pdf.pdf".
-            stem = title[:-len(ext)] if title.lower().endswith(ext) else title
+            # Strip any known extension from the title (case-insensitive) so we
+            # don't double up: "syllabus.pdf" + ".pdf" = "syllabus.pdf", not
+            # "syllabus.pdf.pdf"; "MS-02_C03-Ex.xlsx" + ".pdf" = "MS-02_C03-Ex.pdf",
+            # not "MS-02_C03-Ex.xlsx.pdf".
+            title_ext = Path(title).suffix.lower()
+            stem = title[:-len(title_ext)] if title_ext in _KNOWN_FILE_EXTS else title
             safe_title = sanitize_teacher_title(stem)
-            target = week.week_dir / f"{safe_title}{ext}"
+            target = week.week_dir / f"{safe_title}{use_ext}"
             if target.exists():
                 stats.skipped += 1
                 continue
@@ -360,6 +374,13 @@ def download_files(
             except Exception as exc:
                 print(f"      ✗ 失敗: {exc}")
                 stats.failed.append(f"{week.label}/{target.name}: {type(exc).__name__}: {exc}")
+    if forced_pdf_count > 0:
+        print(t(
+            f"  注意: {forced_pdf_count} 個原本不是 PDF 的檔案被存成 .pdf。"
+            f"如果有檔案打不開,加 --all-file-types 重抓會用真實副檔名。",
+            f"  Note: {forced_pdf_count} non-PDF file(s) were saved with a .pdf extension. "
+            f"If any won't open, re-run with --all-file-types to keep their real extension.",
+        ))
     return stats
 
 
