@@ -385,6 +385,71 @@ def _close_parent_terminal_on_quit() -> None:
         pass
 
 
+def _windows_documents_folder() -> Path | None:
+    """Ask Windows itself where the user's Documents folder really is.
+
+    `~/Documents` works on most installs but breaks in two real cases:
+      - OneDrive sync redirects "Documents" to ~/OneDrive/<localized>/...
+        Often that's ~/OneDrive/文件/ on a Traditional Chinese system.
+      - User moved Documents to D drive via Properties → Location.
+
+    Windows' SHGetKnownFolderPath returns the actual filesystem path for
+    FOLDERID_Documents, transparent to OneDrive redirect, locale, and any
+    user customization. Returns None on non-Windows or if the call fails
+    (caller falls back to ~/Documents)."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _GUID(ctypes.Structure):
+            _fields_ = [
+                ("Data1", wintypes.DWORD),
+                ("Data2", wintypes.WORD),
+                ("Data3", wintypes.WORD),
+                ("Data4", ctypes.c_ubyte * 8),
+            ]
+
+        # FOLDERID_Documents = {FDD39AD0-238F-46AF-ADB4-6C85480369C7}
+        folderid_documents = _GUID(
+            0xFDD39AD0, 0x238F, 0x46AF,
+            (ctypes.c_ubyte * 8)(0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7),
+        )
+
+        SHGetKnownFolderPath = ctypes.windll.shell32.SHGetKnownFolderPath
+        SHGetKnownFolderPath.argtypes = [
+            ctypes.POINTER(_GUID), wintypes.DWORD, wintypes.HANDLE,
+            ctypes.POINTER(ctypes.c_wchar_p),
+        ]
+        SHGetKnownFolderPath.restype = ctypes.HRESULT
+
+        path_ptr = ctypes.c_wchar_p()
+        hr = SHGetKnownFolderPath(
+            ctypes.byref(folderid_documents), 0, None, ctypes.byref(path_ptr),
+        )
+        if hr != 0 or not path_ptr.value:
+            return None
+        result = Path(path_ptr.value)
+        ctypes.windll.ole32.CoTaskMemFree(path_ptr)
+        return result
+    except Exception:
+        return None
+
+
+def _default_documents_root() -> Path:
+    """Where to put the materials folder by default (parent of ntu-cool-gcm_material).
+
+    Windows: SHGetKnownFolderPath if available (handles OneDrive + locale),
+             else ~/Documents.
+    Mac/Linux: ~/Documents.
+    """
+    win_docs = _windows_documents_folder()
+    if win_docs is not None:
+        return win_docs
+    return Path.home() / "Documents"
+
+
 def _resolve_output_dir(arg_value: str | None) -> Path:
     """Resolve where to put downloaded materials.
 
@@ -392,15 +457,16 @@ def _resolve_output_dir(arg_value: str | None) -> Path:
       1. Explicit --out argument (user wins).
       2. ./ntu-cool-gcm_material in the current directory IF it already
          exists (legacy users from <0.2.6 who have stuff there already).
-      3. ~/Documents/ntu-cool-gcm_material (the new default — far easier
-         to find than "wherever I happened to be when I ran the command").
+      3. <Documents>/ntu-cool-gcm_material — Documents resolved via Windows'
+         own KnownFolders API so OneDrive redirects and zh-TW localization
+         go to the right place.
     """
     if arg_value:
         return Path(arg_value).expanduser()
     legacy = Path("ntu-cool-gcm_material")
     if legacy.exists() and legacy.is_dir():
         return legacy
-    return Path.home() / "Documents" / "ntu-cool-gcm_material"
+    return _default_documents_root() / "ntu-cool-gcm_material"
 
 
 def _maybe_set_up_youtube_cookies(cookies_path: Path) -> None:
