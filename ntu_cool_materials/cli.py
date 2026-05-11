@@ -165,8 +165,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "pick",
         help="Interactive: list your active courses, you pick one, it downloads everything.",
     )
-    pick.add_argument("--out", default="ntu-cool-gcm_material",
-                      help="Output directory (default: ntu-cool-gcm_material/, relative to current directory).")
+    pick.add_argument("--out", default=None,
+                      help="Output directory. Default: ~/Documents/ntu-cool-gcm_material "
+                           "(or ./ntu-cool-gcm_material if you already have one there).")
     pick.add_argument("--headers-file", default=".secrets/ntu_cool_headers.txt")
     pick.add_argument("--refresh-session", action="store_true",
                       help="Open the browser to refresh login before listing.")
@@ -199,8 +200,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Download every PDF, Page, YouTube link and NTU CDN video for a course.",
     )
     course.add_argument("--course-id", required=True, help="Canvas course id (e.g. 60804).")
-    course.add_argument("--out", default="ntu-cool-gcm_material",
-                        help="Output directory (default: ntu-cool-gcm_material/, relative to current directory).")
+    course.add_argument("--out", default=None,
+                        help="Output directory. Default: ~/Documents/ntu-cool-gcm_material "
+                             "(or ./ntu-cool-gcm_material if you already have one there).")
     course.add_argument(
         "--headers-file",
         default=".secrets/ntu_cool_headers.txt",
@@ -383,6 +385,24 @@ def _close_parent_terminal_on_quit() -> None:
         pass
 
 
+def _resolve_output_dir(arg_value: str | None) -> Path:
+    """Resolve where to put downloaded materials.
+
+    Precedence:
+      1. Explicit --out argument (user wins).
+      2. ./ntu-cool-gcm_material in the current directory IF it already
+         exists (legacy users from <0.2.6 who have stuff there already).
+      3. ~/Documents/ntu-cool-gcm_material (the new default — far easier
+         to find than "wherever I happened to be when I ran the command").
+    """
+    if arg_value:
+        return Path(arg_value).expanduser()
+    legacy = Path("ntu-cool-gcm_material")
+    if legacy.exists() and legacy.is_dir():
+        return legacy
+    return Path.home() / "Documents" / "ntu-cool-gcm_material"
+
+
 def _maybe_set_up_youtube_cookies(cookies_path: Path) -> None:
     """If the user has no YouTube cookies, offer to set them up inline.
     Skips silently when stdin isn't a tty (piped input / tests)."""
@@ -520,7 +540,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         try:
             download_course(
                 course_id=course_id,
-                output_dir=Path(args.out),
+                output_dir=_resolve_output_dir(args.out),
                 base_url=base_url,
                 headers_path=headers_path,
                 refresh_session=False,
@@ -809,7 +829,7 @@ def _cmd_download_course(base_url: str, args: argparse.Namespace) -> int:
     try:
         download_course(
             course_id=args.course_id,
-            output_dir=Path(args.out),
+            output_dir=_resolve_output_dir(args.out),
             base_url=base_url,
             headers_path=headers_path,
             refresh_session=args.refresh_session,
