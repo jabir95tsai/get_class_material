@@ -1,6 +1,6 @@
 name: smoke (weekly install + doctor)
 
-# Verifies that `pip install ntu-cool-material` from PyPI still works end-to-end:
+# Verifies that `pip install get-class-material` from PyPI still works end-to-end:
 # the package installs cleanly, Playwright Chromium downloads, and `doctor`
 # reports no missing required deps. Catches upstream breakage (yt-dlp /
 # playwright API changes, dependency conflicts) before users hit it.
@@ -19,11 +19,11 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Install latest published ntu-cool-material from PyPI
-        run: pip install --upgrade ntu-cool-material
+      - name: Install latest published get-class-material from PyPI
+        run: pip install --upgrade get-class-material
       - name: Install Playwright Chromium
         run: python -m playwright install chromium
       - name: Run doctor (no auth-dependent checks)
