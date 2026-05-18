@@ -1,0 +1,58 @@
+name: publish to PyPI
+
+# Triggers on every `vX.Y.Z` tag push. Uses PyPI Trusted Publishing
+# (OIDC) — no API token is stored anywhere. The pending publisher must
+# be registered at:
+#   https://pypi.org/manage/project/get-class-material/settings/publishing/
+# with workflow = publish.yml and environment = pypi.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}   # allow manual re-run from the Actions UI
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    # The `pypi` environment is what PyPI's Trusted Publishing config keys
+    # the OIDC claim on. If the name here doesn't match the PyPI setting,
+    # the upload silently fails the OIDC handshake.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/get-class-material
+    permissions:
+      id-token: write   # required for OIDC token issuance
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Verify pyproject.toml version matches the tag
+        # Prevents shipping a wrong-versioned wheel: if you push v0.2.6 but
+        # forgot to bump pyproject.toml from 0.2.5, the build would produce
+        # a 0.2.5 wheel and PyPI would reject "file already exists" — or
+        # worse, succeed and confuse users. Fail fast instead.
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "tag: $TAG_VERSION"
+          echo "pyproject: $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $TAG_VERSION does not match pyproject.toml version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Install build tooling
+        run: pip install --upgrade build
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Publish to PyPI
+        # No `password:` input — the action negotiates OIDC against
+        # PyPI's trusted-publisher endpoint automatically.
+        uses: pypa/gh-action-pypi-publish@release/v1
