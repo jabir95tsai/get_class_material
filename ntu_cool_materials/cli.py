@@ -27,7 +27,38 @@ from .sync import SyncStats, sync_course_materials
 DEFAULT_BASE_URL = "https://cool.ntu.edu.tw"
 
 
+def _force_utf8_streams() -> None:
+    """Reconfigure stdout/stderr to UTF-8 so CJK + box-drawing glyphs don't
+    blow up on Windows consoles defaulting to cp1252/cp950.
+
+    Symptom we're fixing: `print("✓ ...")` raises
+    `UnicodeEncodeError: 'charmap' codec can't encode character '\\u2713'`
+    on Windows when the console codec is anything other than UTF-8. The
+    doctor output, status emojis, and CJK course names all hit this.
+
+    `errors="replace"` keeps us safe if the underlying terminal still
+    can't render some glyph — at worst the user sees `?` instead of `✓`,
+    which is far better than crashing the whole CLI mid-status-update.
+
+    Old `sys.stdout` objects (pre-3.7) lack `reconfigure`; we no-op for
+    safety. Python 3.11+ is our floor so this branch never fires in
+    practice — kept for defensive symmetry.
+    """
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            # ValueError: stream not seekable / already detached
+            # OSError: pipe closed in unusual launch contexts (Windows service)
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_streams()
     parser = _build_parser()
     args = parser.parse_args(argv)
 

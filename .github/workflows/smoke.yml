@@ -27,4 +27,10 @@ jobs:
       - name: Install Playwright Chromium
         run: python -m playwright install chromium
       - name: Run doctor (no auth-dependent checks)
+        # Force UTF-8 so the ✓/⚠/✗ glyphs in doctor's output don't trip
+        # Windows runners that default to cp1252. The next release will
+        # set this from inside cli.py too, but PyPI's currently-published
+        # 0.2.4 still needs this env override here.
+        env:
+          PYTHONIOENCODING: utf-8
         run: python -m ntu_cool_materials doctor
