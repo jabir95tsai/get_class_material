@@ -1,7 +1,11 @@
 """Tests for the PATH-detection bits of doctor.py.
 
-These avoid actually invoking subprocesses or modifying real PATH — we just
-patch `os.environ["PATH"]` and call the pure helpers.
+The path-string tests use platform-neutral fixtures (built from `os.pathsep`
+and `Path("/fake/scripts")` style paths) so they pass on Windows, macOS, and
+Linux. Tests that assert Windows-specific behavior (case-insensitivity,
+backslash trailing separators) are guarded by `os.name == "nt"`.
+
+None of these tests invoke subprocesses or modify real PATH.
 """
 from __future__ import annotations
 
@@ -13,39 +17,60 @@ from unittest import mock
 from ntu_cool_materials import doctor
 
 
+def _join_path(*entries: str) -> str:
+    """Build a PATH-style string with the platform's separator."""
+    return os.pathsep.join(entries)
+
+
+def _fake_scripts_path() -> Path:
+    """A platform-appropriate fake Scripts directory."""
+    return Path(r"C:\Python\Scripts") if os.name == "nt" else Path("/fake/python/scripts")
+
+
+def _other_path() -> str:
+    return r"C:\Other" if os.name == "nt" else "/usr/local/bin"
+
+
+def _windows_path() -> str:
+    return r"C:\Windows" if os.name == "nt" else "/usr/bin"
+
+
 class ScriptsOnPathTests(unittest.TestCase):
     def test_exact_match(self) -> None:
-        scripts = Path(r"C:\Python\Scripts")
-        with mock.patch.dict(os.environ, {"PATH": r"C:\Windows;C:\Python\Scripts;C:\Other"}):
+        scripts = _fake_scripts_path()
+        env = _join_path(_windows_path(), str(scripts), _other_path())
+        with mock.patch.dict(os.environ, {"PATH": env}):
             self.assertTrue(doctor._scripts_on_path(scripts))
 
     def test_missing(self) -> None:
-        scripts = Path(r"C:\Python\Scripts")
-        with mock.patch.dict(os.environ, {"PATH": r"C:\Windows;C:\Other"}):
+        scripts = _fake_scripts_path()
+        env = _join_path(_windows_path(), _other_path())
+        with mock.patch.dict(os.environ, {"PATH": env}):
             self.assertFalse(doctor._scripts_on_path(scripts))
 
+    @unittest.skipUnless(os.name == "nt", "case-insensitive PATH lookup is Windows-only")
     def test_case_insensitive_on_windows(self) -> None:
-        # normcase lowercases on Windows; os.pathsep + paths come back upper-cased
-        # from the registry sometimes, so we need to match regardless of case.
+        # normcase lowercases on Windows; PATH entries from the registry can
+        # come back upper-cased, so we need to match regardless of case.
         scripts = Path(r"C:\Python\Scripts")
-        with mock.patch.dict(os.environ, {"PATH": r"C:\WINDOWS;c:\python\scripts;C:\Other"}):
-            if os.name == "nt":
-                self.assertTrue(doctor._scripts_on_path(scripts))
-            else:
-                # POSIX is case-sensitive — the test is only meaningful on Windows.
-                self.assertFalse(doctor._scripts_on_path(scripts))
+        env = _join_path(r"C:\WINDOWS", r"c:\python\scripts", r"C:\Other")
+        with mock.patch.dict(os.environ, {"PATH": env}):
+            self.assertTrue(doctor._scripts_on_path(scripts))
 
+    @unittest.skipUnless(os.name == "nt", "trailing-backslash normalization is Windows-only")
     def test_trailing_separator_tolerated(self) -> None:
+        # Trailing backslash should normpath away on Windows.
         scripts = Path(r"C:\Python\Scripts")
-        # Trailing backslash should normpath away.
-        with mock.patch.dict(os.environ, {"PATH": r"C:\Python\Scripts\;C:\Other"}):
+        env = _join_path(r"C:\Python\Scripts\\", r"C:\Other")
+        with mock.patch.dict(os.environ, {"PATH": env}):
             self.assertTrue(doctor._scripts_on_path(scripts))
 
     def test_empty_path_entries_ignored(self) -> None:
-        scripts = Path(r"C:\Python\Scripts")
+        scripts = _fake_scripts_path()
         # Empty entries from leading/trailing/double separators should not crash
         # or false-match.
-        with mock.patch.dict(os.environ, {"PATH": f";;{scripts};;"}):
+        env = _join_path("", "", str(scripts), "", "")
+        with mock.patch.dict(os.environ, {"PATH": env}):
             self.assertTrue(doctor._scripts_on_path(scripts))
 
 
@@ -56,23 +81,27 @@ class CheckScriptsOnPathTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertTrue(result.optional)
 
+    @unittest.skipUnless(os.name == "nt", "Windows-only end-to-end check")
     def test_windows_on_path(self) -> None:
-        fake_scripts = Path(r"C:\Python\Scripts")
+        fake_scripts = _fake_scripts_path()
+        env = _join_path(str(fake_scripts), _other_path())
         with (
             mock.patch.object(doctor.platform, "system", return_value="Windows"),
             mock.patch.object(doctor, "_scripts_dir", return_value=fake_scripts),
-            mock.patch.dict(os.environ, {"PATH": str(fake_scripts) + ";C:\\Other"}),
+            mock.patch.dict(os.environ, {"PATH": env}),
         ):
             result = doctor.check_scripts_on_path()
         self.assertTrue(result.ok)
         self.assertEqual(result.detail, str(fake_scripts))
 
+    @unittest.skipUnless(os.name == "nt", "Windows-only end-to-end check")
     def test_windows_missing_offers_auto_install(self) -> None:
-        fake_scripts = Path(r"C:\Python\Scripts")
+        fake_scripts = _fake_scripts_path()
+        env = _join_path(_windows_path(), _other_path())
         with (
             mock.patch.object(doctor.platform, "system", return_value="Windows"),
             mock.patch.object(doctor, "_scripts_dir", return_value=fake_scripts),
-            mock.patch.dict(os.environ, {"PATH": r"C:\Windows;C:\Other"}),
+            mock.patch.dict(os.environ, {"PATH": env}),
         ):
             result = doctor.check_scripts_on_path()
         self.assertFalse(result.ok)
