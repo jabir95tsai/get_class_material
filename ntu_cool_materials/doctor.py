@@ -14,10 +14,12 @@ print the right command for the user to run themselves.
 """
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
 import sys
+import sysconfig
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -123,6 +125,75 @@ def _install_ffmpeg_auto() -> bool:
     return False
 
 
+def _scripts_dir() -> Path | None:
+    """Where pip drops console-script .exe shims for this Python install."""
+    try:
+        path = sysconfig.get_path("scripts")
+    except Exception:
+        return None
+    return Path(path) if path else None
+
+
+def _normalized_path_entries() -> list[str]:
+    raw = os.environ.get("PATH", "")
+    out: list[str] = []
+    for entry in raw.split(os.pathsep):
+        if not entry:
+            continue
+        out.append(os.path.normcase(os.path.normpath(entry)))
+    return out
+
+
+def _scripts_on_path(scripts_dir: Path) -> bool:
+    target = os.path.normcase(os.path.normpath(str(scripts_dir)))
+    return target in _normalized_path_entries()
+
+
+def _add_scripts_to_user_path(scripts_dir: Path) -> bool:
+    """Append scripts_dir to the current user's PATH (Windows only).
+
+    We bypass `setx` for two reasons:
+      1. setx truncates PATH at 1024 chars (legacy registry limit).
+      2. setx reads from the process's PATH (Machine + User merged), so its
+         "write" actually corrupts the User scope with Machine entries.
+    `[Environment]::SetEnvironmentVariable(..., 'User')` reads + writes the
+    HKCU\\Environment hive cleanly, no length limit, no admin required.
+    The change only affects newly-launched processes — the current PowerShell
+    won't see it until reopened, which is fine for our messaging.
+    """
+    if platform.system() != "Windows":
+        return False
+
+    scripts = str(scripts_dir)
+    # Single-quote the path inside the PowerShell literal; PowerShell single
+    # quotes don't expand $vars and treat backslashes literally, so Windows
+    # paths drop in as-is. Embedded apostrophes (rare in usernames) get
+    # doubled-up to escape them.
+    ps_scripts = scripts.replace("'", "''")
+    ps_script = (
+        f"$scripts = '{ps_scripts}'; "
+        "$user = [Environment]::GetEnvironmentVariable('PATH', 'User'); "
+        "if (-not $user) { $user = '' }; "
+        "$entries = @($user -split ';' | Where-Object { $_ -ne '' }); "
+        "if ($entries -notcontains $scripts) { "
+        "  if ($user) { [Environment]::SetEnvironmentVariable('PATH', $user.TrimEnd(';') + ';' + $scripts, 'User') } "
+        "  else { [Environment]::SetEnvironmentVariable('PATH', $scripts, 'User') }; "
+        "  Write-Output 'added' "
+        "} else { Write-Output 'already-present' }"
+    )
+
+    ok = _stream_subprocess(
+        ["powershell", "-NoProfile", "-Command", ps_script],
+        f"add {scripts_dir} to user PATH",
+    )
+    if ok:
+        print(t(
+            "    ⚠ 請關掉這個視窗、重新打開,之後就能直接打 `ntu-cool-gcm` 啟動。",
+            "    ⚠ Close this window, reopen it, then `ntu-cool-gcm` will work directly.",
+        ))
+    return ok
+
+
 # ---- checks ----
 
 def check_python() -> CheckResult:
@@ -226,6 +297,43 @@ def check_ffmpeg() -> CheckResult:
     )
 
 
+def check_scripts_on_path() -> CheckResult:
+    """Python's `Scripts\\` dir must be on PATH or pip's entry-point shims
+    (ntu-cool-gcm.exe etc.) won't resolve from a fresh shell.
+
+    NOTE: keep the `name` string fixed (not localized) — it's used as a
+    set-membership key by `ensure_ready`'s `recommended_names`. The rest
+    of the user-facing strings here can vary by locale.
+    """
+    name = "Python Scripts 在 PATH 上"
+    if platform.system() != "Windows":
+        # On macOS/Linux, pip --user goes to a different dir (~/.local/bin or
+        # /opt/homebrew/bin) and the symptoms / fixes are different enough
+        # that we leave this to the OS package manager and shell rc files.
+        return CheckResult(name=name, ok=True, optional=True, detail="(non-Windows, skipped)")
+
+    scripts_dir = _scripts_dir()
+    if scripts_dir is None:
+        return CheckResult(name=name, ok=True, optional=True, detail="(scripts dir unknown)")
+
+    on_path = _scripts_on_path(scripts_dir)
+    if on_path:
+        return CheckResult(name=name, ok=True, detail=str(scripts_dir))
+
+    return CheckResult(
+        name=name,
+        ok=False,
+        optional=True,
+        detail=f"{scripts_dir} 不在 PATH 上",
+        fix_command=(
+            f'powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('
+            f"'PATH', [Environment]::GetEnvironmentVariable('PATH', 'User').TrimEnd(';') + "
+            f"';{scripts_dir}', 'User')\""
+        ),
+        auto_install=lambda: _add_scripts_to_user_path(scripts_dir),
+    )
+
+
 def check_ntu_session(headers_path: Path) -> CheckResult:
     if not headers_path.exists():
         return CheckResult(
@@ -271,6 +379,7 @@ def _all_checks(headers_path: Path, youtube_cookies_path: Path) -> list[CheckRes
         check_yt_dlp(),
         check_node(),
         check_ffmpeg(),
+        check_scripts_on_path(),
         check_ntu_session(headers_path),
         check_youtube_cookies(youtube_cookies_path),
     ]
@@ -356,6 +465,11 @@ def ensure_ready(
     recommended_names = {
         "Node.js (下載 YouTube 影片用)",
         "ffmpeg (下載 YouTube 影片用)",
+        # Not blocking — if Scripts isn't on PATH, the user invoked us via
+        # `python -m ntu_cool_materials pick` and the pick already works.
+        # The check exists to upgrade that to the shorter `ntu-cool-gcm`
+        # for future runs.
+        "Python Scripts 在 PATH 上",
     }
     relevant = blocking_names | recommended_names
 
