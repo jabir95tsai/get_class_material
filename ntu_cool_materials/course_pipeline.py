@@ -563,11 +563,33 @@ def _ensure_logged_in(page, course_id: str | None, sso_timeout_sec: int) -> bool
 
     target = f"https://{CANVAS_NETLOC}/courses/{course_id}" if course_id else f"https://{CANVAS_NETLOC}/courses"
     print(f"    確認登入狀態 ({target})")
-    page.goto(target, wait_until="domcontentloaded", timeout=120000)
-    if LOGIN_RE.search(page.url):
+    # `wait_until="commit"` returns as soon as the browser commits the
+    # navigation (i.e. starts loading the response) rather than blocking
+    # until the DOM is fully built. NTU's SAML chain is multi-redirect and
+    # the final SSO login page is JS-heavy enough that `domcontentloaded`
+    # would routinely hit the timeout when the saved cookies were stale —
+    # which is exactly the moment we need this code path to work, since
+    # the whole reason we're here is to refresh those cookies. The
+    # subsequent wait_for_url loop is what actually gates on "user has
+    # finished logging in", so we don't need goto itself to wait long.
+    try:
+        page.goto(target, wait_until="commit", timeout=60000)
+    except PWTimeout:
+        # The navigation didn't even commit in 60s — either the network
+        # is down, or NTU's gateway is completely unreachable. But if
+        # we landed somewhere recognizable (a login page mid-redirect),
+        # let the wait_for_url loop below take over. Only bail if the
+        # page object literally has no URL to work with.
+        if not page.url or page.url == "about:blank":
+            print("    無法連到 NTU COOL — 請檢查網路或稍後再試")
+            return False
+        print(f"    導向尚未完成,進入登入等待 ({page.url})")
+
+    if LOGIN_RE.search(page.url) or page.url == "about:blank":
         print(f"    需要登入 — 請在開啟的瀏覽器視窗完成 NTU SSO (最多等 {sso_timeout_sec} 秒)")
         try:
-            page.wait_for_url(lambda u: not LOGIN_RE.search(u), timeout=sso_timeout_sec * 1000)
+            page.wait_for_url(lambda u: not LOGIN_RE.search(u) and u != "about:blank",
+                              timeout=sso_timeout_sec * 1000)
         except PWTimeout:
             print("    SSO 登入逾時")
             return False
