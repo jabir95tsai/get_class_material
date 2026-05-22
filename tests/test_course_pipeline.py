@@ -12,6 +12,8 @@ instead of falling through to wait_for_url's 600s budget.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import unittest
 from unittest import mock
 
@@ -56,6 +58,19 @@ def _make_page(*, url: str, goto_raises: Exception | None = None,
 
 
 class EnsureLoggedInTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # `_ensure_logged_in` print()s status updates in Traditional Chinese.
+        # The CLI normally calls _force_utf8_streams() to reconfigure stdout
+        # before any such print, but unit tests bypass that path — and the
+        # GitHub Windows runner ships with cp1252 stdout, which can't encode
+        # CJK characters. Redirect stdout to a StringIO so the prints happen
+        # against an in-memory UTF-8-capable stream. (No assertion looks at
+        # captured output; we only care about the function's return value
+        # and which Playwright methods it called.)
+        self._stdout_ctx = contextlib.redirect_stdout(io.StringIO())
+        self._stdout_ctx.__enter__()
+        self.addCleanup(self._stdout_ctx.__exit__, None, None, None)
+
     def test_already_logged_in_returns_true(self) -> None:
         """Happy path: cookies are fresh, goto lands directly on /courses."""
         page = _make_page(url="https://cool.ntu.edu.tw/courses")
