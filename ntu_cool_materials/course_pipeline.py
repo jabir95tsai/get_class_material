@@ -304,6 +304,41 @@ _KNOWN_FILE_EXTS = {
 }
 
 
+def _file_item_real_ext(item: dict[str, Any]) -> str:
+    """Best-effort original extension for a Canvas File module item."""
+    title = str(item.get("title") or "").strip()
+    content_details = item.get("content_details") or {}
+    display_name = str(content_details.get("display_name") or "")
+    real_ext = Path(display_name).suffix.lower() if display_name else ""
+    if not real_ext:
+        real_ext = Path(title).suffix.lower()
+    return real_ext
+
+
+def _file_item_target_name(item: dict[str, Any], *, all_file_types: bool) -> str:
+    """Filename for a Canvas File item.
+
+    Default mode downloads every file but writes it to disk with a `.pdf`
+    extension regardless of the original type — most NTU course material IS
+    PDF, this keeps the layout uniform for downstream AI tools, and most
+    apps still open files whose extension is wrong (Word/Excel sniff the
+    binary signature). The trade-off: if a tool relies purely on extension
+    (e.g. zip extractors), the file won't open. Users who hit that pass
+    `--all-file-types` to keep real extensions like .pptx / .xlsx / .zip.
+
+    Always returns a name (never None). Default-mode behavior changed
+    from "skip non-PDF" → "force .pdf"; reverting required because the
+    skip-by-default surprised users who expected every file to land.
+    """
+    title = str(item.get("title") or "").strip() or f"item-{item.get('id')}"
+    real_ext = _file_item_real_ext(item)
+    use_ext = real_ext if all_file_types and real_ext else ".pdf"
+    title_ext = Path(title).suffix.lower()
+    stem = title[:-len(title_ext)] if title_ext in _KNOWN_FILE_EXTS else title
+    safe_title = sanitize_teacher_title(stem)
+    return f"{safe_title}{use_ext}"
+
+
 def download_files(
     plan: CoursePlan, client: CanvasSessionClient, *, all_file_types: bool = False,
 ) -> StageStats:
@@ -329,31 +364,11 @@ def download_files(
                 continue
             file_id = str(item.get("content_id") or "")
             title = str(item.get("title") or "").strip() or f"item-{item.get('id')}"
-
-            # Real extension for this file: prefer Canvas's display_name in
-            # content_details, fall back to the title's suffix.
-            content_details = item.get("content_details") or {}
-            display_name = str(content_details.get("display_name") or "")
-            real_ext = Path(display_name).suffix.lower() if display_name else ""
-            if not real_ext:
-                real_ext = Path(title).suffix.lower()
-
-            # Decide what extension to use ON DISK.
-            if all_file_types:
-                use_ext = real_ext or ".pdf"
-            else:
-                use_ext = ".pdf"
-                if real_ext and real_ext != ".pdf":
-                    forced_pdf_count += 1
-
-            # Strip any known extension from the title (case-insensitive) so we
-            # don't double up: "syllabus.pdf" + ".pdf" = "syllabus.pdf", not
-            # "syllabus.pdf.pdf"; "MS-02_C03-Ex.xlsx" + ".pdf" = "MS-02_C03-Ex.pdf",
-            # not "MS-02_C03-Ex.xlsx.pdf".
-            title_ext = Path(title).suffix.lower()
-            stem = title[:-len(title_ext)] if title_ext in _KNOWN_FILE_EXTS else title
-            safe_title = sanitize_teacher_title(stem)
-            target = week.week_dir / f"{safe_title}{use_ext}"
+            real_ext = _file_item_real_ext(item)
+            target_name = _file_item_target_name(item, all_file_types=all_file_types)
+            target = week.week_dir / target_name
+            if not all_file_types and real_ext and real_ext != ".pdf":
+                forced_pdf_count += 1
             if target.exists():
                 stats.skipped += 1
                 continue
@@ -451,6 +466,91 @@ def _delete_orphan_format_fragments(videos_dir: Path) -> int:
     return n
 
 
+def _count_youtube_urls_in_plan(plan: CoursePlan) -> int:
+    """Distinct YouTube video IDs across the whole plan.
+
+    Used to size the "found N YouTube videos, want to log in?" prompt.
+    Distinct (not raw item count) because the same video may appear in
+    multiple modules and we don't want to overstate the work."""
+    seen: set[str] = set()
+    for week in plan.weeks:
+        for item in week.items:
+            if item.get("type") not in {"ExternalUrl", "ExternalTool"}:
+                continue
+            raw = str(item.get("external_url") or item.get("url") or "")
+            for vid in extract_youtube_ids(raw):
+                seen.add(vid)
+    return len(seen)
+
+
+def maybe_capture_youtube_cookies(
+    plan: CoursePlan, cookies_path: Path,
+    *, interactive: bool = True, input_fn=None,
+) -> bool:
+    """If the plan has YouTube items but no cookies file, offer a one-shot
+    browser login that writes cookies into `cookies_path`.
+
+    Returns True if cookies are now in place (either already-existed or just
+    captured), False if user declined or capture failed. Caller can use this
+    to decide whether to print the "unlisted videos may fail" warning.
+
+    No-op when:
+      - cookies file already exists (don't re-prompt every run)
+      - stdin isn't a TTY (piped scripts, CI, etc.)
+      - the plan has no YouTube items at all
+      - interactive=False (callers that want to suppress the prompt entirely)
+
+    The browser flow is delegated to `youtube_cookies.export_youtube_cookies`,
+    which is also exposed as the standalone `youtube-cookies` CLI. Same code
+    path, same default profile dir — so cookies captured here are reused by
+    the standalone command and vice-versa.
+    """
+    if cookies_path.exists():
+        return True
+    if not interactive:
+        return False
+    if input_fn is None:
+        if not sys.stdin.isatty():
+            return False
+        input_fn = input
+    url_count = _count_youtube_urls_in_plan(plan)
+    if url_count == 0:
+        return False
+
+    prompt = t(
+        f"  ❓ 找到 {url_count} 個 YouTube 影片連結。\n"
+        f"     公開影片不用登入。要不要先登入 YouTube,以下載私人 / 限齡 / 會員影片? [y/N]: ",
+        f"  ❓ Found {url_count} YouTube link(s).\n"
+        f"     Public videos don't need login. Log in to YouTube to enable "
+        f"private/age-restricted/member videos? [y/N]: ",
+    )
+    try:
+        answer = input_fn(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    if answer not in {"y", "yes"}:
+        return False
+
+    try:
+        from .youtube_cookies import export_youtube_cookies
+        print(t(
+            "  → 開啟瀏覽器登入 YouTube(登入後會自動匯出 cookies)...",
+            "  → opening browser for YouTube login (cookies export on detection)...",
+        ))
+        result = export_youtube_cookies(cookies_path=cookies_path, wait_for_login=True)
+        print(t(
+            f"  ✓ 匯出 {result.cookie_count} 個 cookies → {cookies_path}",
+            f"  ✓ exported {result.cookie_count} cookies → {cookies_path}",
+        ))
+        return True
+    except Exception as exc:
+        print(t(
+            f"  ⚠ 抓 YouTube cookies 失敗 ({exc})。改用公開模式繼續。",
+            f"  ⚠ YouTube cookie capture failed ({exc}). Proceeding in public mode.",
+        ))
+        return False
+
+
 def download_youtube(plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-dlp") -> StageStats:
     """For each week with YouTube items, run yt-dlp into the week dir then rename."""
     import platform
@@ -524,13 +624,14 @@ def download_youtube(plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-
         print(f"  [{week.label}/youtube] 開始下載 {len(urls)} 個 URL (缺少 {len(missing)} 個)")
         cmd = [
             yt_dlp, *YT_DLP_BASE_ARGS,
-            "--cookies", str(cookies_path),
             # No --newline: let yt-dlp use \r so the progress bar refreshes
             # in place on a single line instead of spamming the terminal.
             "-P", str(videos_dir),
             "-o", "%(id)s_%(title).120s.%(ext)s",
             "-a", str(urls_file),
         ]
+        if cookies_path.exists():
+            cmd[1:1] = ["--cookies", str(cookies_path)]
         try:
             result = subprocess.run(cmd)
         finally:
@@ -804,7 +905,7 @@ def _build_session_client_from_file(headers_path: Path, base_url: str) -> Canvas
     return CanvasSessionClient(base_url=base_url, headers=read_headers_file(headers_path))
 
 
-def _write_course_overview(plan: CoursePlan) -> Path:
+def _write_course_overview(plan: CoursePlan, *, all_file_types: bool = False) -> Path:
     """Write a Markdown index at the course root listing every downloaded artifact per week.
     Designed to be readable by both humans and AI tools."""
     from datetime import datetime, timezone
@@ -829,10 +930,15 @@ def _write_course_overview(plan: CoursePlan) -> Path:
             kind = item.get("type")
             title = str(item.get("title") or "").strip()
             if kind == "File":
-                stem = title[:-4] if title.lower().endswith(".pdf") else title
-                fname = f"{sanitize_teacher_title(stem)}.pdf"
+                fname = _file_item_target_name(item, all_file_types=all_file_types)
                 if (week.week_dir / fname).exists():
-                    per_type["pdf"].append(f"- 📄 [{title}]({week.label}/{urllib.parse.quote(fname)})")
+                    # In default mode every file is .pdf on disk, so the dual
+                    # icon only matters under --all-file-types where extensions
+                    # are preserved. Either way we route by what's actually
+                    # on disk, not by what the source extension said.
+                    icon = "📄" if Path(fname).suffix.lower() == ".pdf" else "📎"
+                    bucket = "pdf" if Path(fname).suffix.lower() == ".pdf" else "other"
+                    per_type[bucket].append(f"- {icon} [{title}]({week.label}/{urllib.parse.quote(fname)})")
             elif kind == "Page":
                 fname = f"{sanitize_teacher_title(title)}.md"
                 if (week.week_dir / fname).exists():
@@ -966,13 +1072,19 @@ def download_course(
             ))
         if not skip_youtube:
             print(t("\n[3/4] YouTube 影片", "\n[3/4] YouTube videos"))
-            if yt_cookies is None or not yt_cookies.exists():
+            yt_cookies_path = yt_cookies or Path(".secrets/youtube_cookies.txt")
+            # Offer in-pipeline cookie capture if there are YouTube items but
+            # no cookies on disk yet. User can decline; we proceed in public
+            # mode either way. Skipped when stdin isn't a TTY (so this never
+            # blocks scripted / CI invocations).
+            have_cookies = maybe_capture_youtube_cookies(plan, yt_cookies_path)
+            if not have_cookies:
                 print(t(
-                    f"  注意: 找不到 YouTube cookies ({yt_cookies}),不公開影片可能下載失敗",
-                    f"  WARNING: youtube cookies not found at {yt_cookies} — unlisted videos may fail",
+                    f"  注意: 沒有 YouTube cookies,不公開 / 限齡 / 會員影片可能下載失敗",
+                    f"  Note: no YouTube cookies — private / age-restricted / member videos may fail",
                 ))
             course_stats.youtube = download_youtube(
-                plan, cookies_path=yt_cookies or Path(".secrets/youtube_cookies.txt"), yt_dlp=yt_dlp
+                plan, cookies_path=yt_cookies_path, yt_dlp=yt_dlp
             )
 
         if not skip_cool_videos:
@@ -990,7 +1102,7 @@ def download_course(
 
         # Per-course overview at the course root.
         try:
-            overview_path = _write_course_overview(plan)
+            overview_path = _write_course_overview(plan, all_file_types=all_file_types)
             print(t(f"\n  目錄: {overview_path.name}", f"\n  overview: {overview_path.name}"))
         except Exception as exc:
             print(t(f"\n  (無法產生目錄: {exc})", f"\n  (could not write overview: {exc})"))

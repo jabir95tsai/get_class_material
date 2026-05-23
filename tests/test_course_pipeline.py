@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import contextlib
 import io
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from playwright.sync_api import TimeoutError as PWTimeout
@@ -140,6 +142,342 @@ class EnsureLoggedInTests(unittest.TestCase):
         page = _make_page(url="https://cool.ntu.edu.tw/courses")
         course_pipeline._ensure_logged_in(page, course_id=None, sso_timeout_sec=600)
         self.assertEqual(page.goto.call_args.kwargs.get("wait_until"), "commit")
+
+
+class CourseFileHandlingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._stdout_ctx = contextlib.redirect_stdout(io.StringIO())
+        self._stdout_ctx.__enter__()
+        self.addCleanup(self._stdout_ctx.__exit__, None, None, None)
+
+    def test_non_pdf_file_keeps_pdf_extension_by_default(self) -> None:
+        """Default mode forces every download to land as .pdf on disk so the
+        output folder looks uniform for downstream AI tools. --all-file-types
+        opts into the real extension (.pptx in this case)."""
+        item = {
+            "id": 1,
+            "type": "File",
+            "title": "week1 slides.pptx",
+            "content_details": {"display_name": "week1 slides.pptx"},
+        }
+
+        self.assertEqual(
+            course_pipeline._file_item_target_name(item, all_file_types=False),
+            "week1 slides.pdf",
+        )
+        self.assertEqual(
+            course_pipeline._file_item_target_name(item, all_file_types=True),
+            "week1 slides.pptx",
+        )
+
+    def test_pdf_file_unchanged_in_both_modes(self) -> None:
+        """A real PDF should produce the same filename regardless of mode —
+        guards against the .pdf.pdf double-extension regression."""
+        item = {
+            "id": 2,
+            "type": "File",
+            "title": "syllabus.pdf",
+            "content_details": {"display_name": "syllabus.pdf"},
+        }
+        self.assertEqual(
+            course_pipeline._file_item_target_name(item, all_file_types=False),
+            "syllabus.pdf",
+        )
+        self.assertEqual(
+            course_pipeline._file_item_target_name(item, all_file_types=True),
+            "syllabus.pdf",
+        )
+
+    def test_youtube_command_omits_missing_cookie_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plan = course_pipeline.CoursePlan(
+                course={"id": "1", "name": "Course"},
+                course_id="1",
+                course_dir=root,
+                weeks=[
+                    course_pipeline.WeekPlan(
+                        label="week1",
+                        module={
+                            "items": [
+                                {
+                                    "id": 10,
+                                    "type": "ExternalUrl",
+                                    "title": "1-1 video",
+                                    "external_url": "https://www.youtube.com/watch?v=BT4w_3QsrQ8",
+                                }
+                            ]
+                        },
+                        week_dir=root / "week1",
+                    )
+                ],
+            )
+
+            run_result = mock.Mock(returncode=0)
+            with (
+                mock.patch.object(course_pipeline.shutil, "which", return_value="tool"),
+                mock.patch.object(course_pipeline.subprocess, "run", return_value=run_result) as run,
+                mock.patch.object(course_pipeline, "rename_downloaded_videos", return_value=[]),
+            ):
+                course_pipeline.download_youtube(
+                    plan,
+                    cookies_path=root / "missing-youtube-cookies.txt",
+                    yt_dlp="yt-dlp",
+                )
+
+            cmd = run.call_args.args[0]
+            self.assertNotIn("--cookies", cmd)
+
+    def test_youtube_command_uses_cookie_file_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cookies = root / "youtube-cookies.txt"
+            cookies.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            plan = course_pipeline.CoursePlan(
+                course={"id": "1", "name": "Course"},
+                course_id="1",
+                course_dir=root,
+                weeks=[
+                    course_pipeline.WeekPlan(
+                        label="week1",
+                        module={
+                            "items": [
+                                {
+                                    "id": 10,
+                                    "type": "ExternalUrl",
+                                    "title": "1-1 video",
+                                    "external_url": "https://www.youtube.com/watch?v=BT4w_3QsrQ8",
+                                }
+                            ]
+                        },
+                        week_dir=root / "week1",
+                    )
+                ],
+            )
+
+            run_result = mock.Mock(returncode=0)
+            with (
+                mock.patch.object(course_pipeline.shutil, "which", return_value="tool"),
+                mock.patch.object(course_pipeline.subprocess, "run", return_value=run_result) as run,
+                mock.patch.object(course_pipeline, "rename_downloaded_videos", return_value=[]),
+            ):
+                course_pipeline.download_youtube(plan, cookies_path=cookies, yt_dlp="yt-dlp")
+
+            cmd = run.call_args.args[0]
+            self.assertIn("--cookies", cmd)
+            self.assertEqual(cmd[cmd.index("--cookies") + 1], str(cookies))
+
+    def test_course_overview_uses_real_extension_for_all_file_types(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            week_dir = root / "week1"
+            week_dir.mkdir()
+            (week_dir / "week1 slides.pptx").write_bytes(b"pptx")
+            plan = course_pipeline.CoursePlan(
+                course={"id": "1", "name": "Course"},
+                course_id="1",
+                course_dir=root,
+                weeks=[
+                    course_pipeline.WeekPlan(
+                        label="week1",
+                        module={
+                            "name": "Week 1",
+                            "items": [
+                                {
+                                    "id": 1,
+                                    "type": "File",
+                                    "title": "week1 slides.pptx",
+                                    "content_details": {"display_name": "week1 slides.pptx"},
+                                }
+                            ],
+                        },
+                        week_dir=week_dir,
+                    )
+                ],
+            )
+
+            overview = course_pipeline._write_course_overview(plan, all_file_types=True)
+            text = overview.read_text(encoding="utf-8")
+            self.assertIn("week1%20slides.pptx", text)
+            self.assertNotIn("week1%20slides.pdf", text)
+
+
+class MaybeCaptureYoutubeCookiesTests(unittest.TestCase):
+    """Tests for the in-pipeline YouTube cookie capture prompt.
+
+    The function should be conservative: never prompt when cookies already
+    exist, never prompt for non-YouTube courses, never block CI/piped runs.
+    """
+
+    def setUp(self) -> None:
+        self._stdout_ctx = contextlib.redirect_stdout(io.StringIO())
+        self._stdout_ctx.__enter__()
+        self.addCleanup(self._stdout_ctx.__exit__, None, None, None)
+
+    def _make_plan_with_youtube(self, urls: list[str]):
+        return course_pipeline.CoursePlan(
+            course={"id": "1", "name": "Course"},
+            course_id="1",
+            course_dir=Path("."),
+            weeks=[
+                course_pipeline.WeekPlan(
+                    label="week1",
+                    module={
+                        "items": [
+                            {"id": i, "type": "ExternalUrl", "title": f"vid{i}", "external_url": u}
+                            for i, u in enumerate(urls, start=1)
+                        ]
+                    },
+                    week_dir=Path("./week1"),
+                )
+            ],
+        )
+
+    def test_returns_true_when_cookies_already_exist(self) -> None:
+        """Existing cookies = no prompt, no capture. Caller knows it's ok."""
+        with tempfile.TemporaryDirectory() as temp:
+            cookies = Path(temp) / "yt.txt"
+            cookies.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            plan = self._make_plan_with_youtube(["https://youtu.be/dQw4w9WgXcQ"])
+            calls = []
+            result = course_pipeline.maybe_capture_youtube_cookies(
+                plan, cookies, input_fn=lambda p: calls.append(p) or "y",
+            )
+        self.assertTrue(result)
+        self.assertEqual(calls, [], "must not prompt when cookies file already present")
+
+    def test_no_prompt_when_plan_has_no_youtube(self) -> None:
+        """Course with only PDFs / pages / cool-videos should not get bothered."""
+        plan = course_pipeline.CoursePlan(
+            course={"id": "1", "name": "Course"}, course_id="1", course_dir=Path("."),
+            weeks=[course_pipeline.WeekPlan(label="w1", module={"items": []}, week_dir=Path("./w1"))],
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            cookies = Path(temp) / "yt.txt"  # doesn't exist
+            calls = []
+            result = course_pipeline.maybe_capture_youtube_cookies(
+                plan, cookies, input_fn=lambda p: calls.append(p) or "y",
+            )
+        self.assertFalse(result)
+        self.assertEqual(calls, [])
+
+    def test_skipped_when_interactive_false(self) -> None:
+        """interactive=False is the escape hatch for batch / CI callers."""
+        plan = self._make_plan_with_youtube(["https://youtu.be/dQw4w9WgXcQ"])
+        with tempfile.TemporaryDirectory() as temp:
+            cookies = Path(temp) / "yt.txt"
+            calls = []
+            result = course_pipeline.maybe_capture_youtube_cookies(
+                plan, cookies, interactive=False, input_fn=lambda p: calls.append(p) or "y",
+            )
+        self.assertFalse(result)
+        self.assertEqual(calls, [])
+
+    def test_user_declines_returns_false(self) -> None:
+        """User presses Enter / N: no capture, function returns False so
+        caller prints the 'no cookies' warning."""
+        plan = self._make_plan_with_youtube(["https://youtu.be/dQw4w9WgXcQ"])
+        with tempfile.TemporaryDirectory() as temp:
+            cookies = Path(temp) / "yt.txt"
+            result = course_pipeline.maybe_capture_youtube_cookies(
+                plan, cookies, input_fn=lambda p: "n",
+            )
+        self.assertFalse(result)
+        self.assertFalse(cookies.exists())
+
+    def test_user_accepts_runs_export(self) -> None:
+        """User says 'y': we delegate to youtube_cookies.export_youtube_cookies
+        with the right cookies_path. We mock that function to avoid spawning
+        a real browser; what we verify is the wiring."""
+        plan = self._make_plan_with_youtube(["https://youtu.be/dQw4w9WgXcQ", "https://youtu.be/oHg5SJYRHA0"])
+        with tempfile.TemporaryDirectory() as temp:
+            cookies = Path(temp) / "yt.txt"
+
+            captured_kwargs = {}
+
+            def fake_export(**kwargs):
+                captured_kwargs.update(kwargs)
+                # Simulate the real function's side effect: write the cookies file.
+                kwargs["cookies_path"].write_text("# fake cookies\n", encoding="utf-8")
+                return mock.Mock(cookies_path=kwargs["cookies_path"], cookie_count=42, current_url="x")
+
+            with mock.patch("ntu_cool_materials.youtube_cookies.export_youtube_cookies",
+                            side_effect=fake_export):
+                result = course_pipeline.maybe_capture_youtube_cookies(
+                    plan, cookies, input_fn=lambda p: "y",
+                )
+        self.assertTrue(result)
+        self.assertEqual(captured_kwargs.get("cookies_path"), cookies)
+        self.assertTrue(captured_kwargs.get("wait_for_login"))
+
+    def test_eof_during_prompt_returns_false(self) -> None:
+        """User Ctrl-D'd through the prompt. Don't crash."""
+        plan = self._make_plan_with_youtube(["https://youtu.be/dQw4w9WgXcQ"])
+        def raising_input(_prompt):
+            raise EOFError
+        with tempfile.TemporaryDirectory() as temp:
+            cookies = Path(temp) / "yt.txt"
+            result = course_pipeline.maybe_capture_youtube_cookies(
+                plan, cookies, input_fn=raising_input,
+            )
+        self.assertFalse(result)
+
+    def test_export_failure_swallowed_returns_false(self) -> None:
+        """If the browser flow blows up, we warn and proceed in public mode
+        instead of crashing the whole download_course run."""
+        plan = self._make_plan_with_youtube(["https://youtu.be/dQw4w9WgXcQ"])
+        with tempfile.TemporaryDirectory() as temp:
+            cookies = Path(temp) / "yt.txt"
+            with mock.patch("ntu_cool_materials.youtube_cookies.export_youtube_cookies",
+                            side_effect=RuntimeError("playwright went boom")):
+                result = course_pipeline.maybe_capture_youtube_cookies(
+                    plan, cookies, input_fn=lambda p: "y",
+                )
+        self.assertFalse(result)
+        self.assertFalse(cookies.exists())
+
+
+class CountYoutubeUrlsInPlanTests(unittest.TestCase):
+    def test_counts_distinct_video_ids(self) -> None:
+        """Same video appearing twice should count once.
+
+        Note: YouTube IDs are exactly 11 chars of [A-Za-z0-9_-] — short fake
+        IDs like 'abc' won't match extract_youtube_ids' regex. Use full-length
+        fixtures so the test exercises the real code path."""
+        VID_A = "dQw4w9WgXcQ"  # 11 chars
+        VID_B = "oHg5SJYRHA0"  # 11 chars, distinct
+        plan = course_pipeline.CoursePlan(
+            course={"id": "1", "name": "Course"}, course_id="1", course_dir=Path("."),
+            weeks=[
+                course_pipeline.WeekPlan(
+                    label="w1",
+                    module={"items": [
+                        {"id": 1, "type": "ExternalUrl", "title": "v1", "external_url": f"https://youtu.be/{VID_A}"},
+                        # Same video via different URL form — should dedupe.
+                        {"id": 2, "type": "ExternalUrl", "title": "v2", "external_url": f"https://www.youtube.com/watch?v={VID_A}"},
+                        {"id": 3, "type": "ExternalUrl", "title": "v3", "external_url": f"https://youtu.be/{VID_B}"},
+                    ]},
+                    week_dir=Path("./w1"),
+                )
+            ],
+        )
+        self.assertEqual(course_pipeline._count_youtube_urls_in_plan(plan), 2)
+
+    def test_ignores_non_youtube_external_urls(self) -> None:
+        plan = course_pipeline.CoursePlan(
+            course={"id": "1", "name": "Course"}, course_id="1", course_dir=Path("."),
+            weeks=[
+                course_pipeline.WeekPlan(
+                    label="w1",
+                    module={"items": [
+                        {"id": 1, "type": "ExternalUrl", "title": "doc", "external_url": "https://drive.google.com/file/d/xyz"},
+                        {"id": 2, "type": "File", "title": "slides.pdf"},
+                    ]},
+                    week_dir=Path("./w1"),
+                )
+            ],
+        )
+        self.assertEqual(course_pipeline._count_youtube_urls_in_plan(plan), 0)
 
 
 if __name__ == "__main__":

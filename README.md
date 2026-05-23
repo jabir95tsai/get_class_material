@@ -156,7 +156,7 @@ ntu-cool-gcm
   上課影片:   新增 4、跳過 0、失敗 0
 
 檔案存放位置:
-  C:\Users\你\ntu-cool-gcm_material\音樂、演化與大腦 Music, Evolution and the Brain (57544)
+  C:\Users\你\Documents\ntu-cool-gcm_material\音樂、演化與大腦 Music, Evolution and the Brain (57544)
 ```
 
 **最後那行就是你的檔案放在哪。** 用檔案總管打開就能看到。
@@ -177,7 +177,7 @@ ntu-cool-gcm
 下載到的目錄結構長這樣:
 
 ```
-C:\Users\你\ntu-cool-gcm_material\
+C:\Users\你\Documents\ntu-cool-gcm_material\
 └── 音樂、演化與大腦 Music, Evolution and the Brain (57544)\
     ├── course_overview.md        ← 這份課程的目錄索引(可以餵給 AI)
     ├── week1\
@@ -251,7 +251,19 @@ ntu-cool-gcm --skip-youtube --skip-cool-videos
 ntu-cool-gcm --out D:\我的課程
 ```
 
-預設是當前目錄底下的 `ntu-cool-gcm_material/`。
+預設是在你的「文件 / Documents」資料夾底下的 `ntu-cool-gcm_material/`。
+
+如果你的目前資料夾已經有舊版建立的 `ntu-cool-gcm_material/`,工具會沿用那個資料夾,避免把舊檔案拆散。
+
+### 下載 Word / PowerPoint / Excel / Zip 等非 PDF 檔
+
+預設只下載 PDF,避免把 Word、PowerPoint、Zip 之類的檔案誤存成 `.pdf`。
+
+如果老師有放這類檔案,請加:
+
+```powershell
+ntu-cool-gcm --all-file-types
+```
 
 ### 已經知道課程 ID(網址裡的數字)
 
@@ -348,9 +360,15 @@ ntu-cool-gcm --refresh-session
 
 ### Q: 我的檔案到底放在哪
 
-預設在你**執行 `ntu-cool-gcm` 時所在的目錄**底下,叫 `ntu-cool-gcm_material/`。
+預設在你的「文件 / Documents」資料夾底下,叫 `ntu-cool-gcm_material/`。
 
-如果你在 PowerShell 看到提示是 `PS C:\Users\你>`,那就是 `C:\Users\你\ntu-cool-gcm_material\`。
+常見位置像這樣:
+
+```text
+C:\Users\你\Documents\ntu-cool-gcm_material\
+```
+
+如果你以前已經在目前資料夾建立過 `ntu-cool-gcm_material/`,工具會優先沿用那個舊資料夾。
 
 每次跑完工具最後一行也會印「檔案存放位置:」+ 完整路徑。
 
