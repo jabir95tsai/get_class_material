@@ -483,54 +483,14 @@ def _count_youtube_urls_in_plan(plan: CoursePlan) -> int:
     return len(seen)
 
 
-def maybe_capture_youtube_cookies(
-    plan: CoursePlan, cookies_path: Path,
-    *, interactive: bool = True, input_fn=None,
-) -> bool:
-    """If the plan has YouTube items but no cookies file, offer a one-shot
-    browser login that writes cookies into `cookies_path`.
+def _capture_youtube_cookies_interactive(cookies_path: Path) -> bool:
+    """Open Chromium, wait for the user to log into YouTube, write cookies.
 
-    Returns True if cookies are now in place (either already-existed or just
-    captured), False if user declined or capture failed. Caller can use this
-    to decide whether to print the "unlisted videos may fail" warning.
-
-    No-op when:
-      - cookies file already exists (don't re-prompt every run)
-      - stdin isn't a TTY (piped scripts, CI, etc.)
-      - the plan has no YouTube items at all
-      - interactive=False (callers that want to suppress the prompt entirely)
-
-    The browser flow is delegated to `youtube_cookies.export_youtube_cookies`,
-    which is also exposed as the standalone `youtube-cookies` CLI. Same code
-    path, same default profile dir — so cookies captured here are reused by
-    the standalone command and vice-versa.
+    Wraps `youtube_cookies.export_youtube_cookies` with the message strings
+    and error-swallowing that fit the in-pipeline use. Returns True iff
+    cookies are now on disk. Same browser profile dir as the standalone
+    `youtube-cookies` CLI so the two coexist.
     """
-    if cookies_path.exists():
-        return True
-    if not interactive:
-        return False
-    if input_fn is None:
-        if not sys.stdin.isatty():
-            return False
-        input_fn = input
-    url_count = _count_youtube_urls_in_plan(plan)
-    if url_count == 0:
-        return False
-
-    prompt = t(
-        f"  ❓ 找到 {url_count} 個 YouTube 影片連結。\n"
-        f"     公開影片不用登入。要不要先登入 YouTube,以下載私人 / 限齡 / 會員影片? [y/N]: ",
-        f"  ❓ Found {url_count} YouTube link(s).\n"
-        f"     Public videos don't need login. Log in to YouTube to enable "
-        f"private/age-restricted/member videos? [y/N]: ",
-    )
-    try:
-        answer = input_fn(prompt).strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        return False
-    if answer not in {"y", "yes"}:
-        return False
-
     try:
         from .youtube_cookies import export_youtube_cookies
         print(t(
@@ -549,6 +509,59 @@ def maybe_capture_youtube_cookies(
             f"  ⚠ YouTube cookie capture failed ({exc}). Proceeding in public mode.",
         ))
         return False
+
+
+def maybe_retry_youtube_with_login(
+    cookies_path: Path, failed_count: int,
+    *, interactive: bool = True, input_fn=None,
+) -> bool:
+    """Post-failure prompt: yt-dlp couldn't grab `failed_count` videos and
+    we don't have cookies yet — ask once whether to log in and retry.
+
+    Returns True iff cookies are now on disk (caller should retry the
+    download stage). Returns False to mean "give up, leave failures as-is".
+
+    No-op (returns False without prompting) when:
+      - cookies file already exists (failures aren't auth-related)
+      - failed_count == 0 (nothing to retry)
+      - interactive=False (batch / CI callers)
+      - stdin isn't a TTY (piped scripts)
+
+    Design note: the prompt was previously fired BEFORE downloads as a
+    "want to log in just in case?" question. That cost every user one
+    extra interaction even when their course had only public videos —
+    which is the majority case. Moving it to post-failure means the
+    common path costs zero prompts; only courses with actually-private
+    videos pay the interaction cost, and the prompt's wording can be
+    concrete ("12 videos failed") instead of speculative.
+    """
+    if cookies_path.exists():
+        return False
+    if failed_count <= 0:
+        return False
+    if not interactive:
+        return False
+    if input_fn is None:
+        if not sys.stdin.isatty():
+            return False
+        input_fn = input
+
+    prompt = t(
+        f"\n  ❓ 有 {failed_count} 個 YouTube 影片下載失敗。\n"
+        f"     如果是私人 / 限齡 / 會員影片,需要登入 YouTube 才能抓。\n"
+        f"     要登入後重試嗎? [y/N]: ",
+        f"\n  ❓ {failed_count} YouTube download(s) failed.\n"
+        f"     Private / age-restricted / member videos need YouTube login.\n"
+        f"     Log in and retry? [y/N]: ",
+    )
+    try:
+        answer = input_fn(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    if answer not in {"y", "yes"}:
+        return False
+
+    return _capture_youtube_cookies_interactive(cookies_path)
 
 
 def download_youtube(plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-dlp") -> StageStats:
@@ -1073,19 +1086,37 @@ def download_course(
         if not skip_youtube:
             print(t("\n[3/4] YouTube 影片", "\n[3/4] YouTube videos"))
             yt_cookies_path = yt_cookies or Path(".secrets/youtube_cookies.txt")
-            # Offer in-pipeline cookie capture if there are YouTube items but
-            # no cookies on disk yet. User can decline; we proceed in public
-            # mode either way. Skipped when stdin isn't a TTY (so this never
-            # blocks scripted / CI invocations).
-            have_cookies = maybe_capture_youtube_cookies(plan, yt_cookies_path)
-            if not have_cookies:
-                print(t(
-                    f"  注意: 沒有 YouTube cookies,不公開 / 限齡 / 會員影片可能下載失敗",
-                    f"  Note: no YouTube cookies — private / age-restricted / member videos may fail",
-                ))
+            # Strategy: just try to download. Most class YouTube content is
+            # public, so most users never need cookies — asking up front
+            # would burn an interaction on every run for no benefit. After
+            # the run, IF anything failed AND we don't have cookies, then
+            # we ask. That way zero-interaction is the common path and the
+            # post-failure prompt can quote a concrete number of failures.
             course_stats.youtube = download_youtube(
                 plan, cookies_path=yt_cookies_path, yt_dlp=yt_dlp
             )
+            failed_count = len(course_stats.youtube.failed)
+            if maybe_retry_youtube_with_login(yt_cookies_path, failed_count):
+                print(t(
+                    "\n  → 重試失敗的下載(這次帶 YouTube cookies)...",
+                    "\n  → retrying failed downloads (with YouTube cookies)...",
+                ))
+                retry_stats = download_youtube(
+                    plan, cookies_path=yt_cookies_path, yt_dlp=yt_dlp
+                )
+                # Merge: anything yt-dlp managed in the retry adds to `done`;
+                # `failed` is replaced by what STILL failed after both passes;
+                # `skipped` is left alone (the retry pass would have counted
+                # first-pass downloads as "already on disk" → skipped, which
+                # would double-count if we added it in).
+                course_stats.youtube.done += retry_stats.done
+                course_stats.youtube.failed = retry_stats.failed
+                recovered = failed_count - len(retry_stats.failed)
+                if recovered > 0:
+                    print(t(
+                        f"  ✓ 重試救回 {recovered} 個影片",
+                        f"  ✓ retry recovered {recovered} video(s)",
+                    ))
 
         if not skip_cool_videos:
             print(t("\n[4/4] NTU 上課影片 (cool-video)", "\n[4/4] NTU CDN videos (cool-video)"))

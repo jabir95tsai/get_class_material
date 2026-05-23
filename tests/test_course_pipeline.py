@@ -302,11 +302,12 @@ class CourseFileHandlingTests(unittest.TestCase):
             self.assertNotIn("week1%20slides.pdf", text)
 
 
-class MaybeCaptureYoutubeCookiesTests(unittest.TestCase):
-    """Tests for the in-pipeline YouTube cookie capture prompt.
+class MaybeRetryYoutubeWithLoginTests(unittest.TestCase):
+    """Tests for the post-failure YouTube cookie capture prompt.
 
-    The function should be conservative: never prompt when cookies already
-    exist, never prompt for non-YouTube courses, never block CI/piped runs.
+    Strategy reminder: yt-dlp runs first without cookies. If any downloads
+    failed AND we don't have cookies yet AND we're interactive AND in a TTY,
+    THEN we prompt. Most users (public-video courses) never see this.
     """
 
     def setUp(self) -> None:
@@ -314,82 +315,59 @@ class MaybeCaptureYoutubeCookiesTests(unittest.TestCase):
         self._stdout_ctx.__enter__()
         self.addCleanup(self._stdout_ctx.__exit__, None, None, None)
 
-    def _make_plan_with_youtube(self, urls: list[str]):
-        return course_pipeline.CoursePlan(
-            course={"id": "1", "name": "Course"},
-            course_id="1",
-            course_dir=Path("."),
-            weeks=[
-                course_pipeline.WeekPlan(
-                    label="week1",
-                    module={
-                        "items": [
-                            {"id": i, "type": "ExternalUrl", "title": f"vid{i}", "external_url": u}
-                            for i, u in enumerate(urls, start=1)
-                        ]
-                    },
-                    week_dir=Path("./week1"),
-                )
-            ],
-        )
-
-    def test_returns_true_when_cookies_already_exist(self) -> None:
-        """Existing cookies = no prompt, no capture. Caller knows it's ok."""
+    def test_skips_when_cookies_already_exist(self) -> None:
+        """If we already have cookies, the failures aren't auth-related —
+        retrying with the same cookies wouldn't fix anything."""
         with tempfile.TemporaryDirectory() as temp:
             cookies = Path(temp) / "yt.txt"
             cookies.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
-            plan = self._make_plan_with_youtube(["https://youtu.be/dQw4w9WgXcQ"])
             calls = []
-            result = course_pipeline.maybe_capture_youtube_cookies(
-                plan, cookies, input_fn=lambda p: calls.append(p) or "y",
+            result = course_pipeline.maybe_retry_youtube_with_login(
+                cookies, failed_count=3,
+                input_fn=lambda p: calls.append(p) or "y",
             )
-        self.assertTrue(result)
-        self.assertEqual(calls, [], "must not prompt when cookies file already present")
+        self.assertFalse(result)
+        self.assertEqual(calls, [], "must not prompt when cookies already exist")
 
-    def test_no_prompt_when_plan_has_no_youtube(self) -> None:
-        """Course with only PDFs / pages / cool-videos should not get bothered."""
-        plan = course_pipeline.CoursePlan(
-            course={"id": "1", "name": "Course"}, course_id="1", course_dir=Path("."),
-            weeks=[course_pipeline.WeekPlan(label="w1", module={"items": []}, week_dir=Path("./w1"))],
-        )
+    def test_skips_when_no_failures(self) -> None:
+        """Everything downloaded fine — nothing to retry, nothing to ask."""
         with tempfile.TemporaryDirectory() as temp:
-            cookies = Path(temp) / "yt.txt"  # doesn't exist
+            cookies = Path(temp) / "yt.txt"
             calls = []
-            result = course_pipeline.maybe_capture_youtube_cookies(
-                plan, cookies, input_fn=lambda p: calls.append(p) or "y",
+            result = course_pipeline.maybe_retry_youtube_with_login(
+                cookies, failed_count=0,
+                input_fn=lambda p: calls.append(p) or "y",
             )
         self.assertFalse(result)
         self.assertEqual(calls, [])
 
-    def test_skipped_when_interactive_false(self) -> None:
-        """interactive=False is the escape hatch for batch / CI callers."""
-        plan = self._make_plan_with_youtube(["https://youtu.be/dQw4w9WgXcQ"])
+    def test_skips_when_interactive_false(self) -> None:
+        """Batch / CI callers opt out of all prompts via interactive=False."""
         with tempfile.TemporaryDirectory() as temp:
             cookies = Path(temp) / "yt.txt"
             calls = []
-            result = course_pipeline.maybe_capture_youtube_cookies(
-                plan, cookies, interactive=False, input_fn=lambda p: calls.append(p) or "y",
+            result = course_pipeline.maybe_retry_youtube_with_login(
+                cookies, failed_count=5,
+                interactive=False,
+                input_fn=lambda p: calls.append(p) or "y",
             )
         self.assertFalse(result)
         self.assertEqual(calls, [])
 
     def test_user_declines_returns_false(self) -> None:
-        """User presses Enter / N: no capture, function returns False so
-        caller prints the 'no cookies' warning."""
-        plan = self._make_plan_with_youtube(["https://youtu.be/dQw4w9WgXcQ"])
+        """User presses Enter / N: skip the retry, leave failures as-is."""
         with tempfile.TemporaryDirectory() as temp:
             cookies = Path(temp) / "yt.txt"
-            result = course_pipeline.maybe_capture_youtube_cookies(
-                plan, cookies, input_fn=lambda p: "n",
+            result = course_pipeline.maybe_retry_youtube_with_login(
+                cookies, failed_count=3, input_fn=lambda p: "n",
             )
         self.assertFalse(result)
         self.assertFalse(cookies.exists())
 
     def test_user_accepts_runs_export(self) -> None:
-        """User says 'y': we delegate to youtube_cookies.export_youtube_cookies
-        with the right cookies_path. We mock that function to avoid spawning
-        a real browser; what we verify is the wiring."""
-        plan = self._make_plan_with_youtube(["https://youtu.be/dQw4w9WgXcQ", "https://youtu.be/oHg5SJYRHA0"])
+        """User says 'y': delegates to youtube_cookies.export_youtube_cookies
+        with the right cookies_path. Mock the export so we don't spawn a
+        real browser — we're verifying the wiring, not the browser flow."""
         with tempfile.TemporaryDirectory() as temp:
             cookies = Path(temp) / "yt.txt"
 
@@ -397,44 +375,54 @@ class MaybeCaptureYoutubeCookiesTests(unittest.TestCase):
 
             def fake_export(**kwargs):
                 captured_kwargs.update(kwargs)
-                # Simulate the real function's side effect: write the cookies file.
                 kwargs["cookies_path"].write_text("# fake cookies\n", encoding="utf-8")
                 return mock.Mock(cookies_path=kwargs["cookies_path"], cookie_count=42, current_url="x")
 
             with mock.patch("ntu_cool_materials.youtube_cookies.export_youtube_cookies",
                             side_effect=fake_export):
-                result = course_pipeline.maybe_capture_youtube_cookies(
-                    plan, cookies, input_fn=lambda p: "y",
+                result = course_pipeline.maybe_retry_youtube_with_login(
+                    cookies, failed_count=3, input_fn=lambda p: "y",
                 )
         self.assertTrue(result)
         self.assertEqual(captured_kwargs.get("cookies_path"), cookies)
         self.assertTrue(captured_kwargs.get("wait_for_login"))
 
     def test_eof_during_prompt_returns_false(self) -> None:
-        """User Ctrl-D'd through the prompt. Don't crash."""
-        plan = self._make_plan_with_youtube(["https://youtu.be/dQw4w9WgXcQ"])
+        """User Ctrl-D'd through the prompt mid-typing. Don't crash."""
         def raising_input(_prompt):
             raise EOFError
         with tempfile.TemporaryDirectory() as temp:
             cookies = Path(temp) / "yt.txt"
-            result = course_pipeline.maybe_capture_youtube_cookies(
-                plan, cookies, input_fn=raising_input,
+            result = course_pipeline.maybe_retry_youtube_with_login(
+                cookies, failed_count=3, input_fn=raising_input,
             )
         self.assertFalse(result)
 
     def test_export_failure_swallowed_returns_false(self) -> None:
-        """If the browser flow blows up, we warn and proceed in public mode
-        instead of crashing the whole download_course run."""
-        plan = self._make_plan_with_youtube(["https://youtu.be/dQw4w9WgXcQ"])
+        """Browser flow blows up: warn, return False, let the outer pipeline
+        continue with the original (without-cookies) failure list intact."""
         with tempfile.TemporaryDirectory() as temp:
             cookies = Path(temp) / "yt.txt"
             with mock.patch("ntu_cool_materials.youtube_cookies.export_youtube_cookies",
                             side_effect=RuntimeError("playwright went boom")):
-                result = course_pipeline.maybe_capture_youtube_cookies(
-                    plan, cookies, input_fn=lambda p: "y",
+                result = course_pipeline.maybe_retry_youtube_with_login(
+                    cookies, failed_count=3, input_fn=lambda p: "y",
                 )
         self.assertFalse(result)
         self.assertFalse(cookies.exists())
+
+    def test_prompt_quotes_concrete_failure_count(self) -> None:
+        """The whole point of post-failure prompting is to make the question
+        concrete. Sanity-check the prompt actually includes the number."""
+        with tempfile.TemporaryDirectory() as temp:
+            cookies = Path(temp) / "yt.txt"
+            captured = []
+            course_pipeline.maybe_retry_youtube_with_login(
+                cookies, failed_count=7,
+                input_fn=lambda p: captured.append(p) or "n",
+            )
+        self.assertTrue(any("7" in c for c in captured),
+                        f"failure count not in prompt; got prompts: {captured}")
 
 
 class CountYoutubeUrlsInPlanTests(unittest.TestCase):
