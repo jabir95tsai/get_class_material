@@ -149,7 +149,7 @@ def _scripts_on_path(scripts_dir: Path) -> bool:
     return target in _normalized_path_entries()
 
 
-def _add_scripts_to_user_path(scripts_dir: Path) -> bool:
+def _add_scripts_to_user_path_windows(scripts_dir: Path) -> bool:
     """Append scripts_dir to the current user's PATH (Windows only).
 
     We bypass `setx` for two reasons:
@@ -192,6 +192,105 @@ def _add_scripts_to_user_path(scripts_dir: Path) -> bool:
             "    ⚠ Close this window, reopen it, then `ntu-cool-gcm` will work directly.",
         ))
     return ok
+
+
+# Marker block we wrap our PATH export with on POSIX rc files. Lets re-runs
+# detect "already added, don't duplicate" by string match, and gives the
+# user something obvious to grep for / hand-remove if they ever want to
+# undo it. Don't change these strings without a migration path — they're
+# the idempotency key.
+_POSIX_RC_MARKER_BEGIN = "# >>> get-class-material PATH fix >>>"
+_POSIX_RC_MARKER_END = "# <<< get-class-material PATH fix <<<"
+
+
+def _posix_shell_rc_path() -> Path | None:
+    """Best-guess rc file to append PATH exports to.
+
+    macOS: $SHELL is typically /bin/zsh; Terminal.app launches login shells
+    so .zprofile is the canonical "ran-on-login" hook. We prefer .zprofile
+    over .zshrc because .zshrc is interactive-only and skipped for some
+    non-interactive contexts (cron, GUI launchers).
+
+    Linux: zsh users uncommon; default to ~/.bashrc since most distros
+    source it from both login and interactive shells.
+
+    Fish + nushell + other exotic shells: not supported — too many
+    syntactic variations. Returns None and the caller prints manual
+    instructions.
+    """
+    shell = os.environ.get("SHELL", "")
+    home = Path.home()
+    name = os.path.basename(shell).lower()
+
+    if name == "zsh":
+        return home / ".zprofile"
+    if name == "bash":
+        # macOS bash users: .bash_profile (login shell convention).
+        # Linux bash users: .bashrc (interactive shell convention).
+        if platform.system() == "Darwin":
+            return home / ".bash_profile"
+        return home / ".bashrc"
+    # Default for unknown shells on Mac (covers users who never changed
+    # the default zsh but somehow have an empty / unusual $SHELL):
+    if platform.system() == "Darwin":
+        return home / ".zprofile"
+    return None
+
+
+def _add_scripts_to_user_path_posix(scripts_dir: Path) -> bool:
+    """Append scripts_dir to the user's PATH by writing an export block to
+    their shell rc file. Idempotent — re-runs detect the marker and skip."""
+    rc_path = _posix_shell_rc_path()
+    if rc_path is None:
+        print(t(
+            "    無法判斷你的 shell。請手動把下面這行加進你的 shell rc 檔案:",
+            "    Could not detect your shell. Please add this line to your shell rc file:",
+        ))
+        print(f'      export PATH="$PATH:{scripts_dir}"')
+        return False
+
+    block = (
+        f"\n{_POSIX_RC_MARKER_BEGIN}\n"
+        f"# Added by ntu-cool-gcm doctor so the `ntu-cool-gcm` shortcut resolves.\n"
+        f"# Remove this block to undo.\n"
+        f'export PATH="$PATH:{scripts_dir}"\n'
+        f"{_POSIX_RC_MARKER_END}\n"
+    )
+
+    try:
+        existing = rc_path.read_text(encoding="utf-8") if rc_path.exists() else ""
+    except OSError as exc:
+        print(f"    無法讀取 {rc_path}: {exc}")
+        return False
+
+    # Idempotency: if either the marker OR a literal export line for this
+    # exact directory is already present, do nothing. The marker covers
+    # past runs by us; the literal-export check covers users who set up
+    # PATH themselves by hand.
+    if _POSIX_RC_MARKER_BEGIN in existing or f":{scripts_dir}" in existing or f"={scripts_dir}" in existing:
+        print(f"    ✓ {rc_path} 已包含 PATH 設定,沒動")
+        return True
+
+    try:
+        with rc_path.open("a", encoding="utf-8") as f:
+            f.write(block)
+    except OSError as exc:
+        print(f"    無法寫入 {rc_path}: {exc}")
+        return False
+
+    print(f"    ✓ 已把 {scripts_dir} 加進 {rc_path}")
+    print(t(
+        f"    ⚠ 請執行 `source {rc_path}` 或開新的終端機,之後就能直接打 `ntu-cool-gcm`。",
+        f"    ⚠ Run `source {rc_path}` or open a new terminal, then `ntu-cool-gcm` will work directly.",
+    ))
+    return True
+
+
+def _add_scripts_to_user_path(scripts_dir: Path) -> bool:
+    """Dispatch to the platform-appropriate PATH-fix routine."""
+    if platform.system() == "Windows":
+        return _add_scripts_to_user_path_windows(scripts_dir)
+    return _add_scripts_to_user_path_posix(scripts_dir)
 
 
 # ---- checks ----
@@ -297,21 +396,35 @@ def check_ffmpeg() -> CheckResult:
     )
 
 
+def _scripts_on_path_fix_hint(scripts_dir: Path) -> str:
+    """Copy-pasteable manual instructions for the user-facing 'fix' field."""
+    if platform.system() == "Windows":
+        return (
+            f'powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('
+            f"'PATH', [Environment]::GetEnvironmentVariable('PATH', 'User').TrimEnd(';') + "
+            f"';{scripts_dir}', 'User')\""
+        )
+    rc = _posix_shell_rc_path()
+    if rc is None:
+        return f'echo \'export PATH="$PATH:{scripts_dir}"\' >> ~/.profile'
+    return f'echo \'export PATH="$PATH:{scripts_dir}"\' >> {rc}'
+
+
 def check_scripts_on_path() -> CheckResult:
-    """Python's `Scripts\\` dir must be on PATH or pip's entry-point shims
-    (ntu-cool-gcm.exe etc.) won't resolve from a fresh shell.
+    """Python's scripts dir must be on PATH or pip's entry-point shims
+    (`ntu-cool-gcm` etc.) won't resolve from a fresh shell.
+
+    Cross-platform since 0.2.7: previously Windows-only, but the same
+    pitfall hits Mac users who install Python from the python.org installer
+    (`/Library/Frameworks/Python.framework/Versions/X.Y/bin` isn't on the
+    default PATH) — Homebrew Python users avoid it because brew links
+    binaries into /opt/homebrew/bin which is already on PATH.
 
     NOTE: keep the `name` string fixed (not localized) — it's used as a
     set-membership key by `ensure_ready`'s `recommended_names`. The rest
     of the user-facing strings here can vary by locale.
     """
     name = "Python Scripts 在 PATH 上"
-    if platform.system() != "Windows":
-        # On macOS/Linux, pip --user goes to a different dir (~/.local/bin or
-        # /opt/homebrew/bin) and the symptoms / fixes are different enough
-        # that we leave this to the OS package manager and shell rc files.
-        return CheckResult(name=name, ok=True, optional=True, detail="(non-Windows, skipped)")
-
     scripts_dir = _scripts_dir()
     if scripts_dir is None:
         return CheckResult(name=name, ok=True, optional=True, detail="(scripts dir unknown)")
@@ -325,11 +438,7 @@ def check_scripts_on_path() -> CheckResult:
         ok=False,
         optional=True,
         detail=f"{scripts_dir} 不在 PATH 上",
-        fix_command=(
-            f'powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('
-            f"'PATH', [Environment]::GetEnvironmentVariable('PATH', 'User').TrimEnd(';') + "
-            f"';{scripts_dir}', 'User')\""
-        ),
+        fix_command=_scripts_on_path_fix_hint(scripts_dir),
         auto_install=lambda: _add_scripts_to_user_path(scripts_dir),
     )
 
