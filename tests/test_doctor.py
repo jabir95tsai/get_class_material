@@ -147,6 +147,89 @@ class CheckScriptsOnPathTests(unittest.TestCase):
         self.assertEqual(result.name, "Python Scripts 在 PATH 上")
 
 
+class OptionalToolDegradationTests(unittest.TestCase):
+    """Regression for the v0.2.9 smoke failure on Windows: `node`/`ffmpeg`
+    resolve on PATH (e.g. the WindowsApps execution-alias stub) but the
+    `--version` probe exits non-zero. That must degrade to a non-blocking
+    ⚠ warning (optional=True), never a blocking ✗ that makes doctor exit 1.
+    """
+
+    def test_node_found_but_unrunnable_stays_optional(self) -> None:
+        with (
+            mock.patch.object(doctor, "_has", return_value=True),
+            mock.patch.object(doctor, "_run", return_value=(9009, "")),
+        ):
+            result = doctor.check_node()
+        self.assertFalse(result.ok)
+        self.assertTrue(result.optional, "Node must never be a blocking failure")
+        self.assertIsNotNone(result.auto_install)
+
+    def test_node_found_and_runnable_is_ok(self) -> None:
+        with (
+            mock.patch.object(doctor, "_has", return_value=True),
+            mock.patch.object(doctor, "_run", return_value=(0, "v20.11.0")),
+        ):
+            result = doctor.check_node()
+        self.assertTrue(result.ok)
+        self.assertTrue(result.optional)
+        self.assertEqual(result.detail, "v20.11.0")
+
+    def test_node_missing_stays_optional(self) -> None:
+        with mock.patch.object(doctor, "_has", return_value=False):
+            result = doctor.check_node()
+        self.assertFalse(result.ok)
+        self.assertTrue(result.optional)
+
+    def test_ffmpeg_found_but_unrunnable_stays_optional(self) -> None:
+        with (
+            mock.patch.object(doctor, "_has", return_value=True),
+            mock.patch.object(doctor, "_run", return_value=(1, "")),
+        ):
+            result = doctor.check_ffmpeg()
+        self.assertFalse(result.ok)
+        self.assertTrue(result.optional, "ffmpeg must never be a blocking failure")
+
+    def test_ffmpeg_found_and_runnable_is_ok(self) -> None:
+        with (
+            mock.patch.object(doctor, "_has", return_value=True),
+            mock.patch.object(doctor, "_run", return_value=(0, "ffmpeg version 6.1 Copyright (c) 2000")),
+        ):
+            result = doctor.check_ffmpeg()
+        self.assertTrue(result.ok)
+        self.assertTrue(result.optional)
+        self.assertEqual(result.detail, "ffmpeg version 6.1")
+
+    def test_doctor_exits_zero_when_only_optional_tools_unrunnable(self) -> None:
+        """The actual smoke-test scenario end-to-end: with node/ffmpeg found
+        on PATH but non-runnable, run_doctor must still return 0."""
+        import io
+        import contextlib
+
+        def fake_has(cmd: str) -> bool:
+            return cmd in {"node", "ffmpeg", "yt-dlp"}
+
+        def fake_run(cmd, timeout=5):
+            if cmd[:1] == ["yt-dlp"]:
+                return (0, "2026.03.17")
+            return (9009, "")  # node/ffmpeg: found but stub, exits non-zero
+
+        with (
+            mock.patch.object(doctor, "_has", side_effect=fake_has),
+            mock.patch.object(doctor, "_run", side_effect=fake_run),
+            mock.patch.object(doctor, "check_playwright_chromium",
+                              return_value=doctor.CheckResult(name="Playwright Chromium", ok=True)),
+            mock.patch.object(doctor, "check_scripts_on_path",
+                              return_value=doctor.CheckResult(name="Python Scripts 在 PATH 上", ok=True)),
+        ):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = doctor.run_doctor(
+                    headers_path=Path(".secrets/does-not-exist-headers.txt"),
+                    youtube_cookies_path=Path(".secrets/does-not-exist-cookies.txt"),
+                )
+        self.assertEqual(rc, 0, buf.getvalue())
+
+
 class PosixShellRcPathTests(unittest.TestCase):
     """The shell-rc resolver decides which file `_add_scripts_to_user_path_posix`
     writes to. Wrong choice = the export ends up in a file the user's shell

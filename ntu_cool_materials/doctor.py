@@ -359,7 +359,23 @@ def check_yt_dlp() -> CheckResult:
 def check_node() -> CheckResult:
     if _has("node"):
         code, line = _run(["node", "--version"])
-        return CheckResult(name="Node.js (下載 YouTube 影片用)", ok=code == 0, detail=line if code == 0 else "")
+        # Node is optional in *both* branches: on Windows `shutil.which` can
+        # resolve the WindowsApps execution-alias stub (a 0-byte launcher for
+        # the Microsoft Store), so `node --version` exits non-zero even though
+        # `node` is "on PATH". That must degrade to a ⚠ warning, never a
+        # blocking ✗ — Node only gates the YouTube stage.
+        return CheckResult(
+            name="Node.js (下載 YouTube 影片用)",
+            ok=code == 0,
+            optional=True,
+            detail=line if code == 0 else "偵測到 node 但無法執行 (可能是 Windows 商店捷徑)",
+            fix_command=_platform_install_hint(
+                mac="brew install node",
+                linux="到 https://nodejs.org/ 找你的發行版的安裝方式",
+                windows="winget install OpenJS.NodeJS",
+            ),
+            auto_install=_install_node_auto if code != 0 else None,
+        )
     return CheckResult(
         name="Node.js (下載 YouTube 影片用)",
         ok=False,
@@ -377,10 +393,18 @@ def check_node() -> CheckResult:
 def check_ffmpeg() -> CheckResult:
     if _has("ffmpeg"):
         code, line = _run(["ffmpeg", "-version"])
+        # Optional in both branches — same WindowsApps-stub reasoning as Node.
         return CheckResult(
             name="ffmpeg (下載 YouTube 影片用)",
             ok=code == 0,
-            detail=line.split(" Copyright")[0] if line else "",
+            optional=True,
+            detail=line.split(" Copyright")[0] if (line and code == 0) else "偵測到 ffmpeg 但無法執行",
+            fix_command=_platform_install_hint(
+                mac="brew install ffmpeg",
+                linux="apt install ffmpeg (或你的發行版的對應指令)",
+                windows="winget install Gyan.FFmpeg",
+            ),
+            auto_install=_install_ffmpeg_auto if code != 0 else None,
         )
     return CheckResult(
         name="ffmpeg (下載 YouTube 影片用)",
