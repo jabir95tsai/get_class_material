@@ -111,7 +111,14 @@ ntu-cool-gcm
 
 ### 第 6 步 — 選課
 
-登入完成後,PowerShell 會列出你的課程,像這樣:
+登入完成後,工具要連線 NTU COOL 抓你的課程清單。這時你會看到一個會轉的小橫槓:
+
+```text
+- 連線 NTU COOL 中…
+| 讀取課程清單中…
+```
+
+**這是正常的**,代表它正在跟伺服器要資料(網路慢的話會轉久一點),不是當掉。轉完就會列出你的課程,像這樣:
 
 ```text
 找到 5 門課程:
@@ -231,11 +238,13 @@ ntu-cool-gcm
 
 ### 登入過期了
 
+**多數情況你不用做任何事** — 直接跑 `ntu-cool-gcm`,工具會在連線時自動發現登入過期,並馬上幫你開瀏覽器重新登入(你會看到「登入已過期,開啟瀏覽器重新登入…」)。
+
+如果想手動強制重新登入,也可以加:
+
 ```powershell
 ntu-cool-gcm --refresh-session
 ```
-
-會再開一次瀏覽器讓你重新登入。
 
 ### 只想下載 PDF,不要影片
 
@@ -289,13 +298,23 @@ ntu-cool-materials doctor --fix
 
 ### YouTube 不公開影片下載失敗
 
-NTU 老師很多影片是 YouTube「不公開」設定,需要你的 Google 帳號 cookie 才抓得到。第一次設定:
+NTU 老師很多影片是 YouTube「不公開」設定,需要你的 Google 帳號 cookie 才抓得到。
+
+**你不用先手動設定。** 工具會先試著直接下載,**只有**真的有影片抓不到時,才會問你:
+
+```text
+有 2 個 YouTube 影片下載失敗,可能需要登入 Google。要登入後重試嗎? [y/N]
+```
+
+按 `y` 就會跳出瀏覽器,**用你平常會看 NTU COOL 影片的那個 Google 帳號登入**,登入完它會自動重試。
+
+如果你想事先手動設定(例如知道這門課影片都不公開),也可以先跑一次:
 
 ```powershell
 youtube-cookies
 ```
 
-會跳出瀏覽器,**用你平常會看 NTU COOL 影片的那個 Google 帳號登入**,登入完關掉就好。之後再跑 `ntu-cool-gcm` 就抓得到了。
+一樣跳瀏覽器登入 Google,登入完關掉就好。
 
 ---
 
@@ -335,18 +354,18 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ### Q: NTU COOL 登入過期了
 
+直接再跑一次 `ntu-cool-gcm` 就好 — 工具會自動發現過期並開瀏覽器讓你重新登入。要手動強制的話可以加 `--refresh-session`:
+
 ```powershell
 ntu-cool-gcm --refresh-session
 ```
-
-會再開一次瀏覽器讓你重新登入。
 
 ### Q: YouTube 影片抓不到 / 失敗很多
 
 最常見原因:
 
-1. **沒設 YouTube cookies** — 跑 `youtube-cookies` 一次
-2. **沒裝 ffmpeg** — 跑 `ntu-cool-materials doctor` 確認
+1. **需要登入 Google** — 不公開影片要你的 Google cookie。工具下載失敗時會主動問你要不要登入重試,按 `y` 即可;也可以事先跑 `youtube-cookies` 手動設定
+2. **沒裝 ffmpeg / Node.js** — 跑 `ntu-cool-materials doctor` 確認
 3. **影片有 DRM 保護** — 罕見但會發生,這種真的抓不下來
 
 跑 `ntu-cool-materials doctor` 看有沒有缺東西。
