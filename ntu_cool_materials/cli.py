@@ -20,6 +20,7 @@ from .course_pipeline import (
 from .doctor import ensure_ready, run_doctor
 from .i18n import get_lang, set_lang, t
 from .session_client import AUTH_EXPIRED, CanvasSessionClient, read_headers_file
+from .spinner import spinner
 from .storage import ManifestStore
 from .sync import SyncStats, sync_course_materials
 
@@ -599,7 +600,12 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     # in ~one round-trip instead of finding out at the end of a heavy, 30s-
     # capped list_courses call. Only acts on a *definitive* expired signal —
     # a slow/unknown network falls straight through to the normal path.
-    if not just_refreshed and client.check_auth() == AUTH_EXPIRED:
+    if not just_refreshed:
+        with spinner(t("連線 NTU COOL 中…", "Connecting to NTU COOL…")):
+            preflight = client.check_auth()
+    else:
+        preflight = None
+    if preflight == AUTH_EXPIRED:
         print(t(
             "登入已過期,開啟瀏覽器重新登入...",
             "Login expired; opening browser to re-authenticate...",
@@ -615,8 +621,10 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         """Call list_courses, and if we get HTTP 401 (session expired), open the
         browser to re-login automatically and retry once."""
         nonlocal client
+        loading = t("讀取課程清單中…", "Loading your courses…")
         try:
-            return client.list_courses(enrollment_state=enrollment_state)
+            with spinner(loading):
+                return client.list_courses(enrollment_state=enrollment_state)
         except CanvasAPIError as exc:
             if exc.status_code != 401:
                 raise
@@ -627,7 +635,8 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             if not _open_login_browser():
                 raise
             client = CanvasSessionClient(base_url=base_url, headers=read_headers_file(headers_path))
-            return client.list_courses(enrollment_state=enrollment_state)
+            with spinner(loading):
+                return client.list_courses(enrollment_state=enrollment_state)
 
     try:
         courses = _list_courses_with_auto_refresh(args.state)
