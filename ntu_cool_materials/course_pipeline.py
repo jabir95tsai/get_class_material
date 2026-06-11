@@ -303,6 +303,13 @@ _KNOWN_FILE_EXTS = {
     ".mp4", ".mov", ".avi", ".mkv",
 }
 
+# Known non-PDF types. In default mode we keep these real extensions instead
+# of forcing `.pdf`: relabeling an .xlsx/.pptx/.zip as .pdf makes it fail to
+# open by double-click (Explorer routes .pdf to a PDF reader, which can't read
+# the bytes). Only genuinely-PDF or unknown/extensionless files get forced to
+# `.pdf` for a uniform layout — see `_file_item_target_name`.
+_KNOWN_NON_PDF_EXTS = _KNOWN_FILE_EXTS - {".pdf"}
+
 
 def _file_item_real_ext(item: dict[str, Any]) -> str:
     """Best-effort original extension for a Canvas File module item."""
@@ -318,21 +325,30 @@ def _file_item_real_ext(item: dict[str, Any]) -> str:
 def _file_item_target_name(item: dict[str, Any], *, all_file_types: bool) -> str:
     """Filename for a Canvas File item.
 
-    Default mode downloads every file but writes it to disk with a `.pdf`
-    extension regardless of the original type — most NTU course material IS
-    PDF, this keeps the layout uniform for downstream AI tools, and most
-    apps still open files whose extension is wrong (Word/Excel sniff the
-    binary signature). The trade-off: if a tool relies purely on extension
-    (e.g. zip extractors), the file won't open. Users who hit that pass
-    `--all-file-types` to keep real extensions like .pptx / .xlsx / .zip.
+    Extension policy:
 
-    Always returns a name (never None). Default-mode behavior changed
-    from "skip non-PDF" → "force .pdf"; reverting required because the
-    skip-by-default surprised users who expected every file to land.
+    - `all_file_types=True`  → always keep the real extension (.pdf / .docx /
+      .pptx / .xlsx / .zip / …); fall back to `.pdf` only if we can't tell.
+    - default mode → "smart .pdf": keep the real extension for genuinely
+      non-PDF known types (.xlsx / .pptx / .docx / .zip / images / media —
+      anything in `_KNOWN_NON_PDF_EXTS`), but force `.pdf` for files that are
+      already PDF or whose extension is unknown/missing. Most NTU material is
+      PDF, so this keeps the common case uniform for downstream AI tooling
+      WITHOUT relabeling Office/archive files into something that won't open
+      by double-click (an .xlsx renamed to .pdf opens in nothing).
+
+    Always returns a name (never None).
     """
     title = str(item.get("title") or "").strip() or f"item-{item.get('id')}"
     real_ext = _file_item_real_ext(item)
-    use_ext = real_ext if all_file_types and real_ext else ".pdf"
+    if all_file_types:
+        use_ext = real_ext or ".pdf"
+    elif real_ext in _KNOWN_NON_PDF_EXTS:
+        # genuinely non-PDF known type → keep it so it opens normally
+        use_ext = real_ext
+    else:
+        # real PDF, or unknown/extensionless → force .pdf for a uniform layout
+        use_ext = ".pdf"
     title_ext = Path(title).suffix.lower()
     stem = title[:-len(title_ext)] if title_ext in _KNOWN_FILE_EXTS else title
     safe_title = sanitize_teacher_title(stem)
@@ -344,16 +360,15 @@ def download_files(
 ) -> StageStats:
     """Download every File-type module item directly into the week directory.
 
-    Default: download every file but save with .pdf extension regardless of
-    the original type. Most NTU course material is PDF, so this gives a
-    uniform-looking output. Files that aren't really PDF (.docx, .xlsx, .zip,
-    etc.) still download fine — they just sit on disk with a .pdf extension.
-    Most apps still open them (Excel/Word sniff the binary), but if anything
-    won't open, re-run with `all_file_types=True` to get the real extensions.
+    Default ("smart .pdf"): genuinely non-PDF known types (.docx / .xlsx /
+    .pptx / .zip / images / media) keep their real extension so they open
+    normally; only real PDFs and unknown/extensionless files are written as
+    .pdf, keeping the common case uniform for downstream AI tools. See
+    `_file_item_target_name` for the policy.
 
     With `all_file_types=True`, every file keeps its original extension
-    (.pdf / .docx / .pptx / .xlsx / .zip / etc.) — the cleanest behavior but
-    means the output isn't uniformly .pdf.
+    regardless — identical for non-PDF types, and also preserves the real
+    extension for anything with an unknown suffix.
     """
     headers = _session_headers(client)
     stats = StageStats()
@@ -367,7 +382,10 @@ def download_files(
             real_ext = _file_item_real_ext(item)
             target_name = _file_item_target_name(item, all_file_types=all_file_types)
             target = week.week_dir / target_name
-            if not all_file_types and real_ext and real_ext != ".pdf":
+            # Count only files genuinely relabeled to .pdf against a non-PDF
+            # real extension (smart default forces .pdf only for unknown /
+            # extensionless types — known Office/archive types keep their ext).
+            if Path(target_name).suffix.lower() == ".pdf" and real_ext and real_ext != ".pdf":
                 forced_pdf_count += 1
             if target.exists():
                 stats.skipped += 1

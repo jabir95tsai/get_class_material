@@ -19,7 +19,7 @@ from .course_pipeline import (
 )
 from .doctor import ensure_ready, run_doctor
 from .i18n import get_lang, set_lang, t
-from .session_client import CanvasSessionClient, read_headers_file
+from .session_client import AUTH_EXPIRED, CanvasSessionClient, read_headers_file
 from .storage import ManifestStore
 from .sync import SyncStats, sync_course_materials
 
@@ -576,6 +576,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         browser = new_browser
         return True
 
+    just_refreshed = False
     if args.refresh_session or not headers_path.exists():
         if not headers_path.exists() and not args.refresh_session:
             print(t(
@@ -584,6 +585,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             ))
         if not _open_login_browser():
             return 1
+        just_refreshed = True
 
     try:
         client = CanvasSessionClient(base_url=base_url, headers=read_headers_file(headers_path))
@@ -592,6 +594,22 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             browser.close()
         print(t(f"無法讀取登入憑證: {exc}", f"Could not read saved login: {exc}"))
         return 1
+
+    # Fast pre-flight: if we're reusing a saved login, check it's still valid
+    # in ~one round-trip instead of finding out at the end of a heavy, 30s-
+    # capped list_courses call. Only acts on a *definitive* expired signal —
+    # a slow/unknown network falls straight through to the normal path.
+    if not just_refreshed and client.check_auth() == AUTH_EXPIRED:
+        print(t(
+            "登入已過期,開啟瀏覽器重新登入...",
+            "Login expired; opening browser to re-authenticate...",
+        ))
+        if not _open_login_browser():
+            if browser is not None:
+                browser.close()
+            print(t("無法重新登入。", "Could not re-authenticate."))
+            return 1
+        client = CanvasSessionClient(base_url=base_url, headers=read_headers_file(headers_path))
 
     def _list_courses_with_auto_refresh(enrollment_state: str) -> list[dict[str, Any]]:
         """Call list_courses, and if we get HTTP 401 (session expired), open the

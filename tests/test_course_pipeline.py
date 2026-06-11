@@ -150,24 +150,39 @@ class CourseFileHandlingTests(unittest.TestCase):
         self._stdout_ctx.__enter__()
         self.addCleanup(self._stdout_ctx.__exit__, None, None, None)
 
-    def test_non_pdf_file_keeps_pdf_extension_by_default(self) -> None:
-        """Default mode forces every download to land as .pdf on disk so the
-        output folder looks uniform for downstream AI tools. --all-file-types
-        opts into the real extension (.pptx in this case)."""
+    def test_known_non_pdf_file_keeps_real_extension_by_default(self) -> None:
+        """Smart default: genuinely non-PDF known types (.pptx/.xlsx/.zip…)
+        keep their real extension so they open by double-click. Relabeling
+        them .pdf used to make them unopenable in Explorer."""
+        for real_ext in (".pptx", ".xlsx", ".docx", ".zip"):
+            item = {
+                "id": 1,
+                "type": "File",
+                "title": f"week1 material{real_ext}",
+                "content_details": {"display_name": f"week1 material{real_ext}"},
+            }
+            self.assertEqual(
+                course_pipeline._file_item_target_name(item, all_file_types=False),
+                f"week1 material{real_ext}",
+                f"{real_ext} should keep its real extension in default mode",
+            )
+            self.assertEqual(
+                course_pipeline._file_item_target_name(item, all_file_types=True),
+                f"week1 material{real_ext}",
+            )
+
+    def test_unknown_extension_forced_to_pdf_by_default(self) -> None:
+        """Files with no/unknown extension still get .pdf in default mode for a
+        uniform layout — only known non-PDF types are exempt."""
         item = {
             "id": 1,
             "type": "File",
-            "title": "week1 slides.pptx",
-            "content_details": {"display_name": "week1 slides.pptx"},
+            "title": "lecture notes",  # no extension at all
+            "content_details": {"display_name": "lecture notes"},
         }
-
         self.assertEqual(
             course_pipeline._file_item_target_name(item, all_file_types=False),
-            "week1 slides.pdf",
-        )
-        self.assertEqual(
-            course_pipeline._file_item_target_name(item, all_file_types=True),
-            "week1 slides.pptx",
+            "lecture notes.pdf",
         )
 
     def test_pdf_file_unchanged_in_both_modes(self) -> None:

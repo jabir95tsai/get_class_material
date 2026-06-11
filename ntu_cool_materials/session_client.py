@@ -10,7 +10,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .canvas_client import CanvasAPIError, SessionExpiredError, parse_link_header
+from .canvas_client import CanvasAPIError, NoRedirectHandler, SessionExpiredError, parse_link_header
+
+
+# Tri-state result of a cheap pre-flight auth probe. Deliberately NOT a bool:
+# a network/timeout error must NOT be mistaken for "expired" (that would pop a
+# browser open on a merely-slow connection), so it gets its own "unknown".
+AUTH_OK = "ok"
+AUTH_EXPIRED = "expired"
+AUTH_UNKNOWN = "unknown"
 
 
 SENSITIVE_HEADER_NAMES = {"cookie", "authorization", "x-csrf-token"}
@@ -80,6 +88,43 @@ class CanvasSessionClient:
             params.append(("enrollment_state", enrollment_state))
 
         return list(self.list_paginated("/api/v1/courses", params=params))
+
+    def check_auth(self, *, timeout: float = 6.0) -> str:
+        """Cheap, fast pre-flight: is this session still logged in?
+
+        Returns one of AUTH_OK / AUTH_EXPIRED / AUTH_UNKNOWN. Hits the tiny
+        `/api/v1/users/self` endpoint with redirects DISABLED and a short
+        timeout, so we learn the answer in ~one round-trip instead of paying
+        for the full doctor pass + a heavy, redirect-chasing, 30s-capped
+        `list_courses` before discovering the cookie is dead.
+
+        Detection rules (conservative — only flag expiry on definitive signals):
+          - HTTP 200            → AUTH_OK
+          - HTTP 401            → AUTH_EXPIRED (Canvas's unauthenticated reply)
+          - 3xx whose Location  → AUTH_EXPIRED when it points off the Canvas
+            origin (i.e. a redirect into the NTU SAML/SSO login flow)
+          - anything else, incl. timeouts / DNS / connection errors / a 3xx
+            that stays on-origin → AUTH_UNKNOWN (caller proceeds normally; the
+            existing 401-retry wrappers still cover a session that dies later)
+        """
+        url = self._build_url("/api/v1/users/self")
+        request = urllib.request.Request(url, headers=self._request_headers(url))
+        opener = urllib.request.build_opener(NoRedirectHandler)
+        try:
+            with opener.open(request, timeout=timeout) as response:
+                return AUTH_OK if 200 <= response.status < 300 else AUTH_UNKNOWN
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                return AUTH_EXPIRED
+            if exc.code in (301, 302, 303, 307, 308):
+                location = exc.headers.get("Location") if exc.headers else None
+                if location and not self._is_canvas_origin(self._build_url(location)):
+                    return AUTH_EXPIRED  # bounced into SSO → session is gone
+                return AUTH_UNKNOWN  # on-origin redirect → don't guess
+            return AUTH_UNKNOWN
+        except (urllib.error.URLError, OSError, ValueError):
+            # timeout / DNS / connection reset / bad URL → can't conclude expiry
+            return AUTH_UNKNOWN
 
     def get_course(self, course_id: str) -> dict[str, Any]:
         quoted_course_id = urllib.parse.quote(str(course_id), safe="")

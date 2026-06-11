@@ -255,11 +255,11 @@ ntu-cool-gcm --out D:\我的課程
 
 如果你的目前資料夾已經有舊版建立的 `ntu-cool-gcm_material/`,工具會沿用那個資料夾,避免把舊檔案拆散。
 
-### 下載 Word / PowerPoint / Excel / Zip 等非 PDF 檔
+### Word / PowerPoint / Excel / Zip 等非 PDF 檔
 
-預設只下載 PDF,避免把 Word、PowerPoint、Zip 之類的檔案誤存成 `.pdf`。
+預設會**全部下載**:Word、PowerPoint、Excel、Zip、圖片、影音等檔案會保留原本的副檔名(`.docx` / `.pptx` / `.xlsx` / `.zip` …),可以直接雙擊打開。只有「本來就是 PDF」或「副檔名不明」的檔案才會統一存成 `.pdf`,方便後續餵給 AI 工具。
 
-如果老師有放這類檔案,請加:
+如果你想連那些 PDF / 不明副檔名的檔案也保留原始副檔名,可以加:
 
 ```powershell
 ntu-cool-gcm --all-file-types
