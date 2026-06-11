@@ -52,7 +52,52 @@ jobs:
       - name: Build sdist + wheel
         run: python -m build
 
-      - name: Publish to PyPI
-        # No `password:` input — the action negotiates OIDC against
-        # PyPI's trusted-publisher endpoint automatically.
+      # --- Publish with automatic retry -------------------------------------
+      # Root-cause fix for flaky releases: the upload itself is reliable, but
+      # it depends on two *external* services that occasionally return a
+      # transient 5xx — Sigstore's Rekor log (during attestation signing) and
+      # PyPI's upload endpoint. A single blip used to fail the whole release
+      # and require a manual `gh run rerun`. Instead, try up to 3 times with
+      # backoff so transient outages self-heal.
+      #
+      # No `password:` input — the action negotiates OIDC against PyPI's
+      # trusted-publisher endpoint automatically. Attestations stay ON (the
+      # action's default) — we fix the fragility by retrying, not by dropping
+      # the provenance attestation.
+      #
+      # `skip-existing: true` everywhere makes each attempt idempotent: if a
+      # prior attempt (or a re-run of the whole workflow) already uploaded a
+      # file, the next attempt skips it instead of erroring "file already
+      # exists". The "version matches tag" step above is what guards against
+      # accidentally shipping a stale version, so a silent skip here is safe.
+      - name: Publish to PyPI (attempt 1)
+        id: publish-1
+        continue-on-error: true
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+      - name: Backoff before attempt 2
+        if: steps.publish-1.outcome == 'failure'
+        run: sleep 30
+
+      - name: Publish to PyPI (attempt 2)
+        id: publish-2
+        if: steps.publish-1.outcome == 'failure'
+        continue-on-error: true
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+      - name: Backoff before attempt 3
+        if: steps.publish-1.outcome == 'failure' && steps.publish-2.outcome == 'failure'
+        run: sleep 90
+
+      # Final attempt — NOT continue-on-error, so a sustained outage (or a real
+      # misconfiguration) still fails the job loudly instead of silently
+      # shipping nothing.
+      - name: Publish to PyPI (attempt 3, final)
+        if: steps.publish-1.outcome == 'failure' && steps.publish-2.outcome == 'failure'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
