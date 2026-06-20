@@ -19,6 +19,7 @@ the transcoded.mp4 from the captured /api/.../view JSON's altSourceUri.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -501,61 +502,89 @@ def _count_youtube_urls_in_plan(plan: CoursePlan) -> int:
     return len(seen)
 
 
-def _capture_youtube_cookies_interactive(cookies_path: Path) -> bool:
-    """Open Chromium, wait for the user to log into YouTube, write cookies.
+def _youtube_cookie_args(cookies_path: Path, cookies_from_browser: str | None) -> list[str]:
+    """yt-dlp auth args. A real cookies.txt wins; otherwise read the login
+    live from the user's normal browser via --cookies-from-browser, which
+    sidesteps Google's 'this browser may not be secure' block on automated
+    sign-ins. Empty list = try as a public/unlisted download."""
+    if cookies_path.exists():
+        return ["--cookies", str(cookies_path)]
+    if cookies_from_browser:
+        return ["--cookies-from-browser", cookies_from_browser]
+    return []
 
-    Wraps `youtube_cookies.export_youtube_cookies` with the message strings
-    and error-swallowing that fit the in-pipeline use. Returns True iff
-    cookies are now on disk. Same browser profile dir as the standalone
-    `youtube-cookies` CLI so the two coexist.
-    """
-    try:
-        from .youtube_cookies import export_youtube_cookies
-        print(t(
-            "  → 開啟瀏覽器登入 YouTube(登入後會自動匯出 cookies)...",
-            "  → opening browser for YouTube login (cookies export on detection)...",
-        ))
-        result = export_youtube_cookies(
-            cookies_path=cookies_path,
-            profile_dir=cookies_path.parent / "youtube_browser_profile",
-            wait_for_login=True,
-        )
-        print(t(
-            f"  ✓ 匯出 {result.cookie_count} 個 cookies → {cookies_path}",
-            f"  ✓ exported {result.cookie_count} cookies → {cookies_path}",
-        ))
-        return True
-    except Exception as exc:
-        print(t(
-            f"  ⚠ 抓 YouTube cookies 失敗 ({exc})。改用公開模式繼續。",
-            f"  ⚠ YouTube cookie capture failed ({exc}). Proceeding in public mode.",
-        ))
-        return False
+
+# yt-dlp --cookies-from-browser names mapped to the profile dir that proves
+# the browser is installed. Detecting by profile-dir existence keeps us from
+# invoking yt-dlp against browsers that aren't there (which only prints scary
+# errors). Order = the sequence we try them in on a retry.
+def _cookie_browser_candidates() -> list[tuple[str, Path]]:
+    import platform
+
+    home = Path.home()
+    sys_ = platform.system()
+    if sys_ == "Windows":
+        local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        roaming = Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
+        return [
+            ("chrome", local / "Google" / "Chrome" / "User Data"),
+            ("edge", local / "Microsoft" / "Edge" / "User Data"),
+            ("brave", local / "BraveSoftware" / "Brave-Browser" / "User Data"),
+            ("vivaldi", local / "Vivaldi" / "User Data"),
+            ("opera", roaming / "Opera Software" / "Opera Stable"),
+            ("firefox", roaming / "Mozilla" / "Firefox" / "Profiles"),
+        ]
+    if sys_ == "Darwin":
+        appsup = home / "Library" / "Application Support"
+        return [
+            ("chrome", appsup / "Google" / "Chrome"),
+            ("edge", appsup / "Microsoft Edge"),
+            ("brave", appsup / "BraveSoftware" / "Brave-Browser"),
+            ("firefox", appsup / "Firefox" / "Profiles"),
+        ]
+    cfg = home / ".config"
+    return [
+        ("chrome", cfg / "google-chrome"),
+        ("chromium", cfg / "chromium"),
+        ("brave", cfg / "BraveSoftware" / "Brave-Browser"),
+        ("firefox", home / ".mozilla" / "firefox"),
+    ]
+
+
+def _installed_cookie_browsers() -> list[str]:
+    """yt-dlp browser names whose profile dir exists, in try-order."""
+    out: list[str] = []
+    for name, path in _cookie_browser_candidates():
+        try:
+            if path.exists():
+                out.append(name)
+        except OSError:
+            pass
+    return out
 
 
 def maybe_retry_youtube_with_login(
     cookies_path: Path, failed_count: int,
     *, interactive: bool = True, input_fn=None,
 ) -> bool:
-    """Post-failure prompt: yt-dlp couldn't grab `failed_count` videos and
-    we don't have cookies yet — ask once whether to log in and retry.
+    """Post-failure prompt: yt-dlp couldn't grab `failed_count` videos and we
+    have no cookies. Ask once whether to retry using the YouTube login from
+    the user's normal browser. Returns True iff the user consents — the caller
+    then loops `_installed_cookie_browsers()` passing --cookies-from-browser.
 
-    Returns True iff cookies are now on disk (caller should retry the
-    download stage). Returns False to mean "give up, leave failures as-is".
+    Why browser cookies instead of opening a login window: Google blocks
+    sign-in on automation-controlled browsers ('this browser may not be
+    secure'), so a Playwright login almost always fails. Reading cookies from
+    the browser the user already uses sidesteps that entirely.
 
-    No-op (returns False without prompting) when:
-      - cookies file already exists (failures aren't auth-related)
+    No-op (returns False, no prompt) when:
+      - cookies.txt already exists (failures aren't auth-related)
       - failed_count == 0 (nothing to retry)
       - interactive=False (batch / CI callers)
       - stdin isn't a TTY (piped scripts)
 
-    Design note: the prompt was previously fired BEFORE downloads as a
-    "want to log in just in case?" question. That cost every user one
-    extra interaction even when their course had only public videos —
-    which is the majority case. Moving it to post-failure means the
-    common path costs zero prompts; only courses with actually-private
-    videos pay the interaction cost, and the prompt's wording can be
-    concrete ("12 videos failed") instead of speculative.
+    The upfront "want to log in just in case?" prompt was removed entirely:
+    most courses are public, so the common path is now zero prompts.
     """
     if cookies_path.exists():
         return False
@@ -570,24 +599,29 @@ def maybe_retry_youtube_with_login(
 
     prompt = t(
         f"\n  ❓ 有 {failed_count} 個 YouTube 影片下載失敗。\n"
-        f"     如果是私人 / 限齡 / 會員影片,需要登入 YouTube 才能抓。\n"
-        f"     要登入後重試嗎? [y/N]: ",
+        f"     如果是私人 / 限齡 / 會員影片,需要你的 YouTube 登入狀態才能抓。\n"
+        f"     要用你瀏覽器裡已登入的 YouTube 帳號重試嗎? [y/N]: ",
         f"\n  ❓ {failed_count} YouTube download(s) failed.\n"
-        f"     Private / age-restricted / member videos need YouTube login.\n"
-        f"     Log in and retry? [y/N]: ",
+        f"     Private / age-restricted / member videos need your YouTube login.\n"
+        f"     Retry using the YouTube login from your browser? [y/N]: ",
     )
     try:
         answer = input_fn(prompt).strip().lower()
     except (EOFError, KeyboardInterrupt):
         return False
-    if answer not in {"y", "yes"}:
-        return False
-
-    return _capture_youtube_cookies_interactive(cookies_path)
+    return answer in {"y", "yes"}
 
 
-def download_youtube(plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-dlp") -> StageStats:
-    """For each week with YouTube items, run yt-dlp into the week dir then rename."""
+def download_youtube(
+    plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-dlp",
+    cookies_from_browser: str | None = None,
+) -> StageStats:
+    """For each week with YouTube items, run yt-dlp into the week dir then rename.
+
+    Auth: a cookies.txt at `cookies_path` wins; else, if `cookies_from_browser`
+    is set (a yt-dlp browser name), yt-dlp reads the YouTube login live from
+    that browser; else the download is attempted as public/unlisted.
+    """
     import platform
     import tempfile
     stats = StageStats()
@@ -665,8 +699,9 @@ def download_youtube(plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-
             "-o", "%(id)s_%(title).120s.%(ext)s",
             "-a", str(urls_file),
         ]
-        if cookies_path.exists():
-            cmd[1:1] = ["--cookies", str(cookies_path)]
+        cookie_args = _youtube_cookie_args(cookies_path, cookies_from_browser)
+        if cookie_args:
+            cmd[1:1] = cookie_args
         try:
             result = subprocess.run(cmd)
         finally:
@@ -1119,25 +1154,45 @@ def download_course(
             )
             failed_count = len(course_stats.youtube.failed)
             if maybe_retry_youtube_with_login(yt_cookies_path, failed_count):
-                print(t(
-                    "\n  → 重試失敗的下載(這次帶 YouTube cookies)...",
-                    "\n  → retrying failed downloads (with YouTube cookies)...",
-                ))
-                retry_stats = download_youtube(
-                    plan, cookies_path=yt_cookies_path, yt_dlp=yt_dlp
-                )
-                # Merge: anything yt-dlp managed in the retry adds to `done`;
-                # `failed` is replaced by what STILL failed after both passes;
-                # `skipped` is left alone (the retry pass would have counted
-                # first-pass downloads as "already on disk" → skipped, which
-                # would double-count if we added it in).
-                course_stats.youtube.done += retry_stats.done
-                course_stats.youtube.failed = retry_stats.failed
-                recovered = failed_count - len(retry_stats.failed)
+                # Retry the still-missing videos using the YouTube login from
+                # the user's normal browser(s). We try each installed browser
+                # in turn and stop as soon as nothing's left failing — the
+                # right browser is whichever one the user is signed into.
+                # Already-downloaded videos are skipped on each pass, so the
+                # retries only re-attempt what's still missing (no double work,
+                # and `done` can't double-count: each pass derives `done` from
+                # files that weren't on disk when that pass started).
+                browsers = _installed_cookie_browsers()
+                if not browsers:
+                    print(t(
+                        "  ⚠ 找不到可讀取的瀏覽器(Chrome / Edge / Firefox …),無法用瀏覽器登入重試。",
+                        "  ⚠ No readable browser (Chrome / Edge / Firefox …) found; can't retry with browser cookies.",
+                    ))
+                for br in browsers:
+                    print(t(
+                        f"\n  → 用 {br} 裡已登入的 YouTube 帳號重試失敗的下載...",
+                        f"\n  → retrying failed downloads using your {br} YouTube login...",
+                    ))
+                    retry_stats = download_youtube(
+                        plan, cookies_path=yt_cookies_path, yt_dlp=yt_dlp,
+                        cookies_from_browser=br,
+                    )
+                    course_stats.youtube.done += retry_stats.done
+                    course_stats.youtube.failed = retry_stats.failed
+                    if not retry_stats.failed:
+                        break
+                recovered = failed_count - len(course_stats.youtube.failed)
                 if recovered > 0:
                     print(t(
                         f"  ✓ 重試救回 {recovered} 個影片",
                         f"  ✓ retry recovered {recovered} video(s)",
+                    ))
+                if browsers and course_stats.youtube.failed:
+                    print(t(
+                        "  ⚠ 還是有影片抓不到。若你用 Chrome / Edge,請先完全關閉瀏覽器再重跑一次"
+                        "(瀏覽器執行中時 cookie 檔會被鎖住)。",
+                        "  ⚠ Some videos still failed. If you use Chrome / Edge, fully close it and re-run "
+                        "— its cookie database is locked while the browser is open.",
                     ))
 
         if not skip_cool_videos:

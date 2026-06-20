@@ -379,28 +379,19 @@ class MaybeRetryYoutubeWithLoginTests(unittest.TestCase):
         self.assertFalse(result)
         self.assertFalse(cookies.exists())
 
-    def test_user_accepts_runs_export(self) -> None:
-        """User says 'y': delegates to youtube_cookies.export_youtube_cookies
-        with the right cookies_path. Mock the export so we don't spawn a
-        real browser — we're verifying the wiring, not the browser flow."""
+    def test_user_accepts_returns_true_without_opening_a_browser(self) -> None:
+        """User says 'y': the function just signals consent (True). It must NOT
+        open a Playwright login window — the caller reads cookies from the
+        user's existing browser via --cookies-from-browser instead."""
         with tempfile.TemporaryDirectory() as temp:
             cookies = Path(temp) / "yt.txt"
-
-            captured_kwargs = {}
-
-            def fake_export(**kwargs):
-                captured_kwargs.update(kwargs)
-                kwargs["cookies_path"].write_text("# fake cookies\n", encoding="utf-8")
-                return mock.Mock(cookies_path=kwargs["cookies_path"], cookie_count=42, current_url="x")
-
-            with mock.patch("ntu_cool_materials.youtube_cookies.export_youtube_cookies",
-                            side_effect=fake_export):
+            with mock.patch("ntu_cool_materials.youtube_cookies.export_youtube_cookies") as export:
                 result = course_pipeline.maybe_retry_youtube_with_login(
                     cookies, failed_count=3, input_fn=lambda p: "y",
                 )
         self.assertTrue(result)
-        self.assertEqual(captured_kwargs.get("cookies_path"), cookies)
-        self.assertTrue(captured_kwargs.get("wait_for_login"))
+        export.assert_not_called()
+        self.assertFalse(cookies.exists(), "must not write a cookies.txt itself")
 
     def test_eof_during_prompt_returns_false(self) -> None:
         """User Ctrl-D'd through the prompt mid-typing. Don't crash."""
@@ -412,19 +403,6 @@ class MaybeRetryYoutubeWithLoginTests(unittest.TestCase):
                 cookies, failed_count=3, input_fn=raising_input,
             )
         self.assertFalse(result)
-
-    def test_export_failure_swallowed_returns_false(self) -> None:
-        """Browser flow blows up: warn, return False, let the outer pipeline
-        continue with the original (without-cookies) failure list intact."""
-        with tempfile.TemporaryDirectory() as temp:
-            cookies = Path(temp) / "yt.txt"
-            with mock.patch("ntu_cool_materials.youtube_cookies.export_youtube_cookies",
-                            side_effect=RuntimeError("playwright went boom")):
-                result = course_pipeline.maybe_retry_youtube_with_login(
-                    cookies, failed_count=3, input_fn=lambda p: "y",
-                )
-        self.assertFalse(result)
-        self.assertFalse(cookies.exists())
 
     def test_prompt_quotes_concrete_failure_count(self) -> None:
         """The whole point of post-failure prompting is to make the question
@@ -438,6 +416,51 @@ class MaybeRetryYoutubeWithLoginTests(unittest.TestCase):
             )
         self.assertTrue(any("7" in c for c in captured),
                         f"failure count not in prompt; got prompts: {captured}")
+
+
+class YoutubeCookieArgsTests(unittest.TestCase):
+    def test_real_cookies_file_wins(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            cookies = Path(temp) / "yt.txt"
+            cookies.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            args = course_pipeline._youtube_cookie_args(cookies, "edge")
+            self.assertEqual(args, ["--cookies", str(cookies)])
+
+    def test_browser_used_when_no_cookies_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            cookies = Path(temp) / "missing.txt"
+            args = course_pipeline._youtube_cookie_args(cookies, "chrome")
+            self.assertEqual(args, ["--cookies-from-browser", "chrome"])
+
+    def test_empty_when_neither(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            cookies = Path(temp) / "missing.txt"
+            self.assertEqual(course_pipeline._youtube_cookie_args(cookies, None), [])
+
+
+class InstalledCookieBrowsersTests(unittest.TestCase):
+    def test_detects_only_browsers_whose_profile_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            present = root / "chrome-profile"
+            present.mkdir()
+            absent = root / "edge-profile"  # never created
+            candidates = [("chrome", present), ("edge", absent)]
+            with mock.patch.object(course_pipeline, "_cookie_browser_candidates",
+                                   return_value=candidates):
+                self.assertEqual(course_pipeline._installed_cookie_browsers(), ["chrome"])
+
+    def test_preserves_candidate_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ("a", "b", "c"):
+                (root / name).mkdir()
+            candidates = [("brave", root / "c"), ("chrome", root / "a"), ("edge", root / "b")]
+            with mock.patch.object(course_pipeline, "_cookie_browser_candidates",
+                                   return_value=candidates):
+                self.assertEqual(
+                    course_pipeline._installed_cookie_browsers(), ["brave", "chrome", "edge"]
+                )
 
 
 class CountYoutubeUrlsInPlanTests(unittest.TestCase):

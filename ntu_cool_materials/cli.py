@@ -533,65 +533,24 @@ def _secrets_dir() -> Path:
     return Path.home() / ".ntu-cool-gcm" / ".secrets"
 
 
-def _maybe_set_up_youtube_cookies(cookies_path: Path) -> None:
-    """If the user has no YouTube cookies, offer to set them up inline.
-    Skips silently when stdin isn't a tty (piped input / tests)."""
-    if cookies_path.exists():
-        return
-    if not sys.stdin.isatty():
-        return
-    print(t(
-        "\n尚未設定 YouTube cookies,下載不公開影片會需要。",
-        "\nNo YouTube cookies set up yet — required for unlisted videos.",
-    ))
-    print(t(
-        "(若你只下載 PDF 或 Page 可以跳過)",
-        "(You can skip if you only want PDFs or Pages.)",
-    ))
-    try:
-        ans = input(t(
-            "現在設定嗎? 會跳出瀏覽器讓你登入 Google 帳號 [y/N]: ",
-            "Set them up now? A browser will open for you to log in to Google [y/N]: ",
-        )).strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        return
-    if ans not in {"y", "yes"}:
-        return
-    try:
-        from .youtube_cookies import export_youtube_cookies
-        # Keep the YouTube browser profile next to the cookies file (the
-        # resolved, writable secrets dir) — otherwise it would default to a
-        # CWD-relative .secrets and fail from non-writable dirs like system32.
-        result = export_youtube_cookies(
-            cookies_path=cookies_path,
-            profile_dir=cookies_path.parent / "youtube_browser_profile",
-        )
-        print(t(
-            f"  ✓ 已存入 {result.cookie_count} 個 cookies → {result.cookies_path}",
-            f"  ✓ saved {result.cookie_count} cookies → {result.cookies_path}",
-        ))
-    except Exception as exc:
-        print(t(f"  設定 YouTube cookies 失敗: {exc}", f"  YouTube cookies setup failed: {exc}"))
-        print(t(
-            "  (之後可以隨時執行 `youtube-cookies` 重試)",
-            "  (You can re-run `youtube-cookies` later.)",
-        ))
-
-
 def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     """Interactive course picker → download_course.
 
     First-run hook: silently checks Python/Playwright/yt-dlp/Chromium and
     auto-installs whatever is missing so the user can run `ntu-cool-gcm`
     immediately after `pip install ntu-cool-material` without other steps.
+
+    Note: there is intentionally no upfront "set up YouTube cookies?" prompt.
+    Most course videos are public/unlisted and download without any login, so
+    the common path is zero prompts. Only if some videos actually fail does
+    download_course ask (once) whether to retry using the YouTube login from
+    the user's browser — see course_pipeline.maybe_retry_youtube_with_login.
     """
     set_lang(args.lang)
     headers_path = Path(args.headers_file)
     youtube_cookies = Path(args.youtube_cookies)
     if not ensure_ready(headers_path=headers_path, youtube_cookies_path=youtube_cookies):
         return 1
-    if not args.skip_youtube:
-        _maybe_set_up_youtube_cookies(youtube_cookies)
     browser: BrowserSession | None = None
 
     def _open_login_browser() -> bool:
