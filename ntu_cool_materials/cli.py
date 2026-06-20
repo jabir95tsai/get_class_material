@@ -121,6 +121,12 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="ntu-cool-materials",
         description="Sync NTU COOL / Canvas course materials.",
     )
+    # Resolve once so every subcommand's secret defaults share the same base
+    # (a writable home dir unless ./.secrets already exists). See _secrets_dir.
+    secrets = _secrets_dir()
+    default_headers = str(secrets / "ntu_cool_headers.txt")
+    default_profile = str(secrets / "ntu_cool_browser_profile")
+    default_cookies = str(secrets / "youtube_cookies.txt")
     parser.add_argument("--base-url", default=os.environ.get("NTU_COOL_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--token", default=None, help="Canvas access token. Prefer env var instead.")
     parser.add_argument("--token-env", default="NTU_COOL_TOKEN", help="Environment variable for token.")
@@ -141,7 +147,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     courses.add_argument(
         "--profile-dir",
-        default=".secrets/ntu_cool_browser_profile",
+        default=default_profile,
         help="Persistent browser profile for --refresh-session.",
     )
     courses.add_argument(
@@ -188,8 +194,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "doctor",
         help="Check that everything (Python, yt-dlp, node, ffmpeg, Chromium, cookies) is ready to go.",
     )
-    doctor.add_argument("--headers-file", default=".secrets/ntu_cool_headers.txt")
-    doctor.add_argument("--youtube-cookies", default=".secrets/youtube_cookies.txt")
+    doctor.add_argument("--headers-file", default=default_headers)
+    doctor.add_argument("--youtube-cookies", default=default_cookies)
     doctor.add_argument("--fix", action="store_true",
                         help="Try to auto-install missing pieces (pip, Chromium, winget/brew).")
 
@@ -200,11 +206,11 @@ def _build_parser() -> argparse.ArgumentParser:
     pick.add_argument("--out", default=None,
                       help="Output directory. Default: ~/Documents/ntu-cool-gcm_material "
                            "(or ./ntu-cool-gcm_material if you already have one there).")
-    pick.add_argument("--headers-file", default=".secrets/ntu_cool_headers.txt")
+    pick.add_argument("--headers-file", default=default_headers)
     pick.add_argument("--refresh-session", action="store_true",
                       help="Open the browser to refresh login before listing.")
-    pick.add_argument("--profile-dir", default=".secrets/ntu_cool_browser_profile")
-    pick.add_argument("--youtube-cookies", default=".secrets/youtube_cookies.txt")
+    pick.add_argument("--profile-dir", default=default_profile)
+    pick.add_argument("--youtube-cookies", default=default_cookies)
     pick.add_argument("--yt-dlp", default="yt-dlp")
     pick.add_argument("--state", default="active",
                       help="enrollment_state filter (default: active).")
@@ -237,7 +243,7 @@ def _build_parser() -> argparse.ArgumentParser:
                              "(or ./ntu-cool-gcm_material if you already have one there).")
     course.add_argument(
         "--headers-file",
-        default=".secrets/ntu_cool_headers.txt",
+        default=default_headers,
         help="Logged-in browser request headers (Canvas session cookie).",
     )
     course.add_argument(
@@ -247,12 +253,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     course.add_argument(
         "--profile-dir",
-        default=".secrets/ntu_cool_browser_profile",
+        default=default_profile,
         help="Persistent Playwright Chromium profile directory.",
     )
     course.add_argument(
         "--youtube-cookies",
-        default=".secrets/youtube_cookies.txt",
+        default=default_cookies,
         help="Netscape cookies.txt for yt-dlp.",
     )
     course.add_argument("--yt-dlp", default="yt-dlp", help="yt-dlp executable.")
@@ -501,6 +507,32 @@ def _resolve_output_dir(arg_value: str | None) -> Path:
     return _default_documents_root() / "ntu-cool-gcm_material"
 
 
+def _secrets_dir() -> Path:
+    """Where to keep login cookies / browser profile / YouTube cookies.
+
+    Precedence:
+      1. ./.secrets in the current directory IF it already exists — keeps
+         existing users on their saved login, and keeps devs running from the
+         repo on the git-ignored ./.secrets. Note the default PowerShell start
+         dir is the user's home, so anyone who ran from there already has
+         ~/.secrets and stays on it.
+      2. ~/.ntu-cool-gcm/.secrets — a stable, always-writable home location.
+
+    Anchoring secrets to home (instead of the current dir) is what stops the
+    `WinError 5 存取被拒` crash when someone launches the tool from a folder
+    they can't write to — most commonly C:\\WINDOWS\\system32, the working dir
+    of an elevated "PowerShell (Admin)" window. The output dir already resolves
+    to <Documents>/… for the same reason; this brings secrets in line.
+    """
+    legacy = Path(".secrets")
+    try:
+        if legacy.is_dir():
+            return legacy
+    except OSError:
+        pass
+    return Path.home() / ".ntu-cool-gcm" / ".secrets"
+
+
 def _maybe_set_up_youtube_cookies(cookies_path: Path) -> None:
     """If the user has no YouTube cookies, offer to set them up inline.
     Skips silently when stdin isn't a tty (piped input / tests)."""
@@ -527,7 +559,13 @@ def _maybe_set_up_youtube_cookies(cookies_path: Path) -> None:
         return
     try:
         from .youtube_cookies import export_youtube_cookies
-        result = export_youtube_cookies(cookies_path=cookies_path)
+        # Keep the YouTube browser profile next to the cookies file (the
+        # resolved, writable secrets dir) — otherwise it would default to a
+        # CWD-relative .secrets and fail from non-writable dirs like system32.
+        result = export_youtube_cookies(
+            cookies_path=cookies_path,
+            profile_dir=cookies_path.parent / "youtube_browser_profile",
+        )
         print(t(
             f"  ✓ 已存入 {result.cookie_count} 個 cookies → {result.cookies_path}",
             f"  ✓ saved {result.cookie_count} cookies → {result.cookies_path}",
@@ -564,6 +602,21 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             new_browser = open_browser_session(
                 profile_dir=Path(args.profile_dir), headless=False, course_id=None,
             )
+        except PermissionError as exc:
+            # e.g. launched from C:\WINDOWS\system32 (elevated PowerShell) where
+            # the profile/secrets dir can't be created. With the home-anchored
+            # default this is rare, but a custom --profile-dir on a read-only
+            # path can still hit it. Tell the user how to recover instead of
+            # dumping a traceback.
+            print(t(
+                f"無法建立登入資料夾(存取被拒): {exc}",
+                f"Could not create the login folder (access denied): {exc}",
+            ))
+            print(t(
+                "  → 請改在可寫入的資料夾執行,例如先打 `cd $HOME` 再跑 `ntu-cool-gcm`。",
+                "  → Run from a writable folder, e.g. `cd $HOME` then `ntu-cool-gcm`.",
+            ))
+            return False
         except RuntimeError as exc:
             print(t(f"無法啟動瀏覽器: {exc}", f"Could not start browser: {exc}"))
             return False
@@ -1006,7 +1059,7 @@ def _require_token(args: argparse.Namespace) -> str | None:
 
 def _announcements_client(base_url: str, args: argparse.Namespace) -> CanvasClient | CanvasSessionClient | None:
     if args.refresh_session and not args.headers_file:
-        args.headers_file = ".secrets/ntu_cool_headers.txt"
+        args.headers_file = str(_secrets_dir() / "ntu_cool_headers.txt")
 
     if args.headers_file:
         try:
@@ -1025,7 +1078,7 @@ def _announcements_client(base_url: str, args: argparse.Namespace) -> CanvasClie
 
 def _courses_client(base_url: str, args: argparse.Namespace) -> CanvasClient | CanvasSessionClient | None:
     if args.refresh_session and not args.headers_file:
-        args.headers_file = ".secrets/ntu_cool_headers.txt"
+        args.headers_file = str(_secrets_dir() / "ntu_cool_headers.txt")
 
     if args.refresh_session:
         try:

@@ -515,7 +515,11 @@ def _capture_youtube_cookies_interactive(cookies_path: Path) -> bool:
             "  → 開啟瀏覽器登入 YouTube(登入後會自動匯出 cookies)...",
             "  → opening browser for YouTube login (cookies export on detection)...",
         ))
-        result = export_youtube_cookies(cookies_path=cookies_path, wait_for_login=True)
+        result = export_youtube_cookies(
+            cookies_path=cookies_path,
+            profile_dir=cookies_path.parent / "youtube_browser_profile",
+            wait_for_login=True,
+        )
         print(t(
             f"  ✓ 匯出 {result.cookie_count} 個 cookies → {cookies_path}",
             f"  ✓ exported {result.cookie_count} cookies → {cookies_path}",

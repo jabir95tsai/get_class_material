@@ -7,11 +7,55 @@ and verifies the stream now accepts the previously-failing glyphs.
 """
 from __future__ import annotations
 
+import contextlib
 import io
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from ntu_cool_materials import cli
+
+
+@contextlib.contextmanager
+def _chdir(path: str):
+    prev = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(prev)
+
+
+class SecretsDirTests(unittest.TestCase):
+    """Regression for the `WinError 5 存取被拒: '.secrets'` crash: launching
+    from a non-writable dir (C:\\WINDOWS\\system32) used to fail because
+    .secrets was created relative to the CWD. Secrets now anchor to home
+    unless a ./.secrets already exists (existing users / repo devs)."""
+
+    def test_no_local_secrets_uses_home(self) -> None:
+        with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
+            with _chdir(cwd), mock.patch.object(cli.Path, "home", return_value=Path(home)):
+                result = cli._secrets_dir()
+            self.assertEqual(result, Path(home) / ".ntu-cool-gcm" / ".secrets")
+
+    def test_existing_local_secrets_wins(self) -> None:
+        with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
+            (Path(cwd) / ".secrets").mkdir()
+            with _chdir(cwd), mock.patch.object(cli.Path, "home", return_value=Path(home)):
+                result = cli._secrets_dir()
+            self.assertEqual(result, Path(".secrets"))
+
+    def test_parser_defaults_resolve_under_home_when_no_local_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
+            with _chdir(cwd), mock.patch.object(cli.Path, "home", return_value=Path(home)):
+                parser = cli._build_parser()
+                args = parser.parse_args(["pick"])
+            base = str(Path(home) / ".ntu-cool-gcm" / ".secrets")
+            self.assertTrue(args.headers_file.startswith(base), args.headers_file)
+            self.assertTrue(args.profile_dir.startswith(base), args.profile_dir)
+            self.assertTrue(args.youtube_cookies.startswith(base), args.youtube_cookies)
 
 
 class ForceUtf8StreamsTests(unittest.TestCase):
