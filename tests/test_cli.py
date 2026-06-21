@@ -28,6 +28,38 @@ def _chdir(path: str):
         os.chdir(prev)
 
 
+class VersionTests(unittest.TestCase):
+    """`--version` is the first thing a bug report needs. Guard that it works
+    on all entry points and that it stays pinned to the packaged version
+    (not a hand-edited literal that drifts — the bug this replaced)."""
+
+    def test_version_string_matches_package_metadata(self) -> None:
+        from importlib.metadata import version
+        self.assertEqual(cli._version_string(), version("get-class-material"))
+
+    def test_top_level_version_flag_prints_and_exits_zero(self) -> None:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), self.assertRaises(SystemExit) as cm:
+            cli.main(["--version"])
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn(cli._version_string(), buf.getvalue())
+
+    def test_pick_main_intercepts_long_version(self) -> None:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli.pick_main(["--version"])
+        self.assertEqual(rc, 0)
+        self.assertIn("ntu-cool-gcm", buf.getvalue())
+        self.assertIn(cli._version_string(), buf.getvalue())
+
+    def test_pick_main_intercepts_short_V(self) -> None:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli.pick_main(["-V"])
+        self.assertEqual(rc, 0)
+        self.assertIn(cli._version_string(), buf.getvalue())
+
+
 class SecretsDirTests(unittest.TestCase):
     """Regression for the `WinError 5 存取被拒: '.secrets'` crash: launching
     from a non-writable dir (C:\\WINDOWS\\system32) used to fail because

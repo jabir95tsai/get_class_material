@@ -537,7 +537,9 @@ def run_doctor(
     fix: bool = False,
 ) -> int:
     """Standalone `doctor` subcommand: report (and optionally auto-fix) everything."""
+    from . import __version__
     print(t("ntu-cool-material 系統檢查", "ntu-cool-material doctor"))
+    print(f"get-class-material {__version__}")
     print(t(
         f"作業系統: {platform.system()} {platform.release()}\n",
         f"Platform: {platform.system()} {platform.release()}\n",

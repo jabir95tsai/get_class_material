@@ -116,10 +116,23 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
+def _version_string() -> str:
+    """Installed package version (single source of truth = pyproject.toml)."""
+    from . import __version__
+    return __version__
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ntu-cool-materials",
         description="Sync NTU COOL / Canvas course materials.",
+    )
+    # `--version` / `-V`: argparse's version action prints and exits 0. This is
+    # the first thing to ask a user in a bug report, so make it trivially
+    # discoverable. (pick_main intercepts it too, so `ntu-cool-gcm -V` works.)
+    parser.add_argument(
+        "--version", "-V", action="version",
+        version=f"%(prog)s {_version_string()}",
     )
     # Resolve once so every subcommand's secret defaults share the same base
     # (a writable home dir unless ./.secrets already exists). See _secrets_dir.
@@ -953,6 +966,11 @@ def pick_main(argv: list[str] | None = None) -> int:
     """
     import sys
     forwarded = list(sys.argv[1:]) if argv is None else list(argv)
+    # `--version`/`-V` would otherwise be forwarded into the `pick` subparser,
+    # which doesn't define it. Handle it here so `ntu-cool-gcm -V` works.
+    if any(arg in ("--version", "-V") for arg in forwarded):
+        print(f"ntu-cool-gcm {_version_string()}")
+        return 0
     return main(["pick", *forwarded])
 
 

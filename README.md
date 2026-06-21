@@ -296,6 +296,14 @@ ntu-cool-materials doctor
 ntu-cool-materials doctor --fix
 ```
 
+### 看自己是哪個版本(回報問題時很有用)
+
+```powershell
+ntu-cool-gcm --version
+```
+
+`doctor` 的最上面也會印出版本號。回報問題時附上版本,會比較好幫你查。
+
 ### YouTube 不公開影片下載失敗
 
 大部分 NTU 老師的 YouTube 影片是「**不公開 (unlisted)**」,這種**不需要登入**就能抓,工具會直接下載。
