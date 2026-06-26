@@ -540,6 +540,17 @@ def run_doctor(
     from . import __version__
     print(t("ntu-cool-material 系統檢查", "ntu-cool-material doctor"))
     print(f"get-class-material {__version__}")
+    try:
+        from .cli import _secrets_dir
+        from .update_check import check_for_update
+        _newer = check_for_update(__version__, cache_path=_secrets_dir() / "update_check.json")
+        if _newer:
+            print(t(
+                f"  💡 有新版本 {_newer},更新: pip install --upgrade get-class-material",
+                f"  💡 Update available: {_newer} — pip install --upgrade get-class-material",
+            ))
+    except Exception:
+        pass
     print(t(
         f"作業系統: {platform.system()} {platform.release()}\n",
         f"Platform: {platform.system()} {platform.release()}\n",

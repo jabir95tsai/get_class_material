@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from .i18n import get_lang, set_lang, t
 from .session_client import AUTH_EXPIRED, CanvasSessionClient, read_headers_file
 from .spinner import spinner
 from .storage import ManifestStore
+from .update_check import check_for_update
 from .sync import SyncStats, sync_course_materials
 
 
@@ -562,8 +564,36 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     set_lang(args.lang)
     headers_path = Path(args.headers_file)
     youtube_cookies = Path(args.youtube_cookies)
+
+    # Fire the "newer version on PyPI?" check in the background so it overlaps
+    # the (several-second) ensure_ready env check below — zero added latency.
+    # It hits the network at most once a day (cached), and never raises.
+    _update_result: dict[str, str | None] = {}
+
+    def _bg_update_check() -> None:
+        try:
+            _update_result["latest"] = check_for_update(
+                _version_string(), cache_path=_secrets_dir() / "update_check.json",
+            )
+        except Exception:
+            pass
+
+    _update_thread = threading.Thread(target=_bg_update_check, daemon=True)
+    _update_thread.start()
+
     if not ensure_ready(headers_path=headers_path, youtube_cookies_path=youtube_cookies):
         return 1
+
+    _update_thread.join(timeout=2.0)
+    _newer = _update_result.get("latest")
+    if _newer:
+        print(t(
+            f"\n💡 有新版本 {_newer}(你目前 {_version_string()})。"
+            f"更新指令: pip install --upgrade get-class-material\n",
+            f"\n💡 Update available: {_newer} (you have {_version_string()}). "
+            f"Run: pip install --upgrade get-class-material\n",
+        ))
+
     browser: BrowserSession | None = None
 
     def _open_login_browser() -> bool:

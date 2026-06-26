@@ -216,6 +216,9 @@ class OptionalToolDegradationTests(unittest.TestCase):
         with (
             mock.patch.object(doctor, "_has", side_effect=fake_has),
             mock.patch.object(doctor, "_run", side_effect=fake_run),
+            # run_doctor does a (cached, best-effort) PyPI update check — keep
+            # the test hermetic / offline by stubbing it.
+            mock.patch("ntu_cool_materials.update_check.check_for_update", return_value=None),
             mock.patch.object(doctor, "check_playwright_chromium",
                               return_value=doctor.CheckResult(name="Playwright Chromium", ok=True)),
             mock.patch.object(doctor, "check_scripts_on_path",

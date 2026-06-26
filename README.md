@@ -304,6 +304,14 @@ ntu-cool-gcm --version
 
 `doctor` 的最上面也會印出版本號。回報問題時附上版本,會比較好幫你查。
 
+工具每次啟動時也會**自動檢查有沒有新版**(一天最多查一次,離線就跳過,不會拖慢速度)。如果有新版會提醒你:
+
+```text
+💡 有新版本 0.2.18(你目前 0.2.17)。更新指令: pip install --upgrade get-class-material
+```
+
+照著跑那行 `pip install --upgrade get-class-material` 就更新好了。
+
 ### YouTube 不公開影片下載失敗
 
 大部分 NTU 老師的 YouTube 影片是「**不公開 (unlisted)**」,這種**不需要登入**就能抓,工具會直接下載。
