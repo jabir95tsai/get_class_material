@@ -608,7 +608,14 @@ def ensure_ready(
     }
     relevant = blocking_names | recommended_names
 
-    initial = [c for c in _all_checks(headers_path, youtube_cookies_path) if c.name in relevant]
+    # Gathering the checks is the real wait the user sits through before the
+    # course list shows (Playwright launches a context to detect Chromium —
+    # multiple seconds). Spin a bar over it so a returning user, for whom this
+    # is otherwise dead-silent, can see it's working rather than hung. The
+    # spinner stops (and clears its line) before any of the messages below.
+    from .spinner import spinner
+    with spinner(t("檢查環境中…", "Checking your setup…")):
+        initial = [c for c in _all_checks(headers_path, youtube_cookies_path) if c.name in relevant]
     missing = [c for c in initial if not c.ok]
     if not missing:
         return True
