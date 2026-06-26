@@ -11,6 +11,17 @@ pip install get-class-material
 ntu-cool-gcm
 ```
 
+## 怎麼更新到最新版
+
+**不確定要不要更新?** 直接跑這行就對了 —— 已經是最新版的話它什麼都不會做,不會弄壞任何東西:
+
+```powershell
+pip install --upgrade get-class-material
+```
+
+> 就是安裝指令多加 `--upgrade`。建議偶爾跑一次拿最新修正。
+> (0.2.18 以後的版本啟動時會自動提醒你有沒有新版;但如果你現在是更舊的版本,看不到提醒是正常的 —— 跑上面那行更新一次就會開始有提醒了。)
+
 ---
 
 ## 這個工具是什麼
@@ -336,6 +347,16 @@ ntu-cool-gcm --version
 ---
 
 ## 常見問題
+
+### Q: 怎麼更新到最新版?
+
+在 PowerShell 跑這行:
+
+```powershell
+pip install --upgrade get-class-material
+```
+
+已經是最新版的話它不會做任何事,所以隨時都可以放心跑。想確認自己現在哪一版,打 `ntu-cool-gcm --version`。
 
 ### Q: 輸入 `python --version` 顯示「無法辨識」/「找不到」
 
