@@ -69,6 +69,20 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 2
 
+    if hasattr(args, "notebooklm_max_sources"):
+        if args.notebooklm_max_sources < 1:
+            parser.error("--notebooklm-max-sources must be greater than zero")
+        if args.notebooklm_url:
+            if getattr(args, "no_notebooklm", False):
+                parser.error("--notebooklm-url cannot be combined with --no-notebooklm")
+            from .notebooklm import NotebookLMError, validate_notebook_url
+            try:
+                args.notebooklm_url = validate_notebook_url(args.notebooklm_url)
+            except NotebookLMError as exc:
+                parser.error(str(exc))
+            if args.command in {"pick", "download-course"}:
+                args.notebooklm = True
+
     base_url = args.base_url or os.environ.get("NTU_COOL_BASE_URL") or DEFAULT_BASE_URL
 
     try:
@@ -104,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_download_course(base_url, args)
         if args.command == "pick":
             return _cmd_pick(base_url, args)
+        if args.command == "notebooklm":
+            return _cmd_notebooklm(Path(args.course_dir) if args.course_dir else None, args)
         if args.command == "doctor":
             return run_doctor(
                 headers_path=Path(args.headers_file),
@@ -231,6 +247,7 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="enrollment_state filter (default: active).")
     pick.add_argument("--skip-pdfs", action="store_true")
     pick.add_argument("--skip-pages", action="store_true")
+    pick.add_argument("--skip-announcements", action="store_true", help="Skip course announcements.")
     pick.add_argument("--skip-youtube", action="store_true")
     pick.add_argument("--skip-cool-videos", action="store_true")
     pick.add_argument(
@@ -279,12 +296,33 @@ def _build_parser() -> argparse.ArgumentParser:
     course.add_argument("--yt-dlp", default="yt-dlp", help="yt-dlp executable.")
     course.add_argument("--skip-pdfs", action="store_true")
     course.add_argument("--skip-pages", action="store_true")
+    course.add_argument("--skip-announcements", action="store_true", help="Skip course announcements.")
     course.add_argument("--skip-youtube", action="store_true")
     course.add_argument("--skip-cool-videos", action="store_true")
     course.add_argument(
         "--all-file-types", action="store_true",
         help="Also download non-PDF files (.docx / .pptx / .xlsx / .zip / etc.).",
     )
+
+    notebook = subparsers.add_parser("notebooklm", help="Import an existing course folder into personal NotebookLM.")
+    notebook.add_argument("--course-dir", help="One course folder; omit to open the interactive course picker.")
+    notebook.add_argument("--out", default=None, help="Materials root to list in the interactive picker.")
+    notebook_mode = notebook.add_mutually_exclusive_group()
+    notebook_mode.add_argument("--dry-run", action="store_true", help="List candidates without opening a browser or uploading.")
+    notebook_mode.add_argument("--guide", action="store_true", help="Interactive login, target and fallback guidance.")
+    notebook_mode.add_argument("--manual", action="store_true", help="Prepare batch folders for manual upload; no Google login.")
+    for target in (pick, course, notebook):
+        if target is not notebook:
+            nlm_mode = target.add_mutually_exclusive_group()
+            nlm_mode.add_argument("--notebooklm", action="store_true", help="Import course documents after downloading.")
+            nlm_mode.add_argument("--no-notebooklm", action="store_true", help="Skip the NotebookLM offer after downloading.")
+        target.add_argument("--notebooklm-url", default=None,
+                            help="Existing notebook URL; otherwise reuse the course mapping or create a notebook.")
+        target.add_argument("--notebooklm-profile", default=str(secrets / "notebooklm_browser_profile"),
+                            help="Separate persistent Google browser profile; never uses Canvas cookies.")
+        target.add_argument("--notebooklm-include-media", action="store_true", help="Also import supported local audio/video files.")
+        target.add_argument("--notebooklm-max-sources", type=int, default=50,
+                            help="Total sources per notebook allowed by your plan (default: 50).")
 
     sync = subparsers.add_parser("sync", help="Download course files and module metadata.")
     sync.add_argument("--state", default="active", help="Canvas enrollment_state filter.")
@@ -711,13 +749,14 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         return 0
 
     def _run_download(course: dict[str, Any]) -> None:
+        nonlocal notebooklm_failed
         course_id = str(course["id"])
         print(t(
             f"\n→ {course.get('name')!r} (課程 ID {course_id})\n",
             f"\n→ {course.get('name')!r} (course id {course_id})\n",
         ))
         try:
-            download_course(
+            plan = download_course(
                 course_id=course_id,
                 output_dir=_resolve_output_dir(args.out),
                 base_url=base_url,
@@ -730,21 +769,31 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                 profile_dir=Path(args.profile_dir),
                 skip_pdfs=args.skip_pdfs,
                 skip_pages=args.skip_pages,
+                skip_announcements=args.skip_announcements,
                 skip_youtube=args.skip_youtube,
                 skip_cool_videos=args.skip_cool_videos,
                 all_file_types=args.all_file_types,
             )
+            if getattr(args, "notebooklm", False):
+                if _cmd_notebooklm(plan.course_dir, args):
+                    notebooklm_failed = True
+            elif not getattr(args, "no_notebooklm", False) and sys.stdin.isatty():
+                from .notebooklm_flow import choose
+                if choose("\n要將這門課匯入 NotebookLM 嗎？[y/N]：", {"y", "n"}, "n") == "y":
+                    if _cmd_notebooklm(plan.course_dir, args, guided=True):
+                        notebooklm_failed = True
         except RuntimeError as exc:
             print(t(f"下載失敗: {exc}", f"download failed: {exc}"))
             # Don't bail on the loop — let the user try another course.
 
+    notebooklm_failed = False
     n = len(courses)
     downloaded_in_session: set[str] = set()
 
     def _quit(_message: str = "") -> int:
         if not args.keep_terminal:
             _close_parent_terminal_on_quit()
-        return 0
+        return 1 if notebooklm_failed else 0
 
     def _course_label(c: dict[str, Any]) -> str:
         return str(c.get("name") or c.get("course_code") or c.get("id"))
@@ -1011,7 +1060,7 @@ def _cmd_download_course(base_url: str, args: argparse.Namespace) -> int:
         print("Tip: pass --refresh-session to open the browser and create one.")
         return 2
     try:
-        download_course(
+        plan = download_course(
             course_id=args.course_id,
             output_dir=_resolve_output_dir(args.out),
             base_url=base_url,
@@ -1022,13 +1071,52 @@ def _cmd_download_course(base_url: str, args: argparse.Namespace) -> int:
             profile_dir=Path(args.profile_dir),
             skip_pdfs=args.skip_pdfs,
             skip_pages=args.skip_pages,
+            skip_announcements=args.skip_announcements,
             skip_youtube=args.skip_youtube,
             skip_cool_videos=args.skip_cool_videos,
             all_file_types=args.all_file_types,
         )
+        if getattr(args, "notebooklm", False):
+            return _cmd_notebooklm(plan.course_dir, args)
         return 0
     except RuntimeError as exc:
         print(f"download-course aborted: {exc}")
+        return 1
+
+
+def _cmd_notebooklm(course_dir: Path | None, args: argparse.Namespace, *, guided: bool = False) -> int:
+    from .notebooklm import run_import
+    try:
+        from .notebooklm_flow import guided_import, prepare_manual_upload, select_course_folder
+        if course_dir is None:
+            course_dir = select_course_folder(_resolve_output_dir(args.out))
+            if course_dir is None:
+                return 0
+            # Explicit preview/manual modes are respected after folder selection.
+            guided = not (getattr(args, "dry_run", False) or getattr(args, "manual", False))
+        if guided or getattr(args, "guide", False):
+            return guided_import(
+                course_dir, profile_dir=Path(args.notebooklm_profile),
+                notebook_url=args.notebooklm_url, include_media=args.notebooklm_include_media,
+                max_sources=args.notebooklm_max_sources,
+            )
+        if getattr(args, "manual", False):
+            prepare_manual_upload(course_dir, include_media=args.notebooklm_include_media,
+                                  max_sources=args.notebooklm_max_sources)
+            return 0
+        run_import(
+            course_dir, profile_dir=Path(args.notebooklm_profile),
+            notebook_url=args.notebooklm_url,
+            include_media=args.notebooklm_include_media,
+            max_sources=args.notebooklm_max_sources,
+            dry_run=getattr(args, "dry_run", False),
+        )
+        return 0
+    except (RuntimeError, OSError, ValueError) as exc:
+        # Only our own errors are safe to show; never dump Playwright login URLs.
+        from .notebooklm import NotebookLMError
+        detail = str(exc) if isinstance(exc, NotebookLMError) else "本機檔案或瀏覽器操作失敗，請確認路徑和登入狀態。"
+        print(f"NotebookLM 匯入未完成：{detail}")
         return 1
 
 

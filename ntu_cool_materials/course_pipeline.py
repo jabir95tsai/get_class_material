@@ -32,8 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .announcements import html_to_text
-from .canvas_client import NoRedirectHandler, SessionExpiredError
+from .announcements import html_to_text, write_announcements
+from .canvas_client import CanvasAPIError, NoRedirectHandler, SessionExpiredError
 from .i18n import t
 from .media_naming import build_video_title_map, extract_youtube_ids, rename_downloaded_videos, sanitize_teacher_title
 from .session_client import DROP_REQUEST_HEADER_NAMES, CanvasSessionClient
@@ -86,10 +86,25 @@ class StageStats:
 
 @dataclass
 class CourseStats:
+    announcements: StageStats = field(default_factory=StageStats)
     pdfs: StageStats = field(default_factory=StageStats)
     pages: StageStats = field(default_factory=StageStats)
     youtube: StageStats = field(default_factory=StageStats)
     cool_videos: StageStats = field(default_factory=StageStats)
+
+
+def save_announcements(plan: CoursePlan, client: CanvasSessionClient) -> StageStats:
+    """Refresh all visible announcements, including edits to previously saved posts."""
+    stats = StageStats()
+    try:
+        announcements = client.list_course_announcements(plan.course_id)
+        write_announcements(plan.course_dir.parent, plan.course, announcements)
+        stats.done = len(announcements)
+    except SessionExpiredError:
+        raise
+    except (CanvasAPIError, OSError, ValueError) as exc:
+        stats.failed.append(f"announcements: {exc}")
+    return stats
 
 
 # ---- planning ----
@@ -990,6 +1005,8 @@ def _write_course_overview(plan: CoursePlan, *, all_file_types: bool = False) ->
         "課程教材總覽。每週的 PDF / Page / 影片都列在下方並連到本機檔案。",
         "",
     ]
+    if (plan.course_dir / "announcements" / "announcements.md").exists():
+        lines.extend(["## 公告", "", "- [公告全文](announcements/announcements.md)", ""])
     for week in plan.weeks:
         module_name = week.module.get("name") or week.label
         lines.append(f"## {module_name}")
@@ -1044,6 +1061,7 @@ def download_course(
     profile_dir: Path = Path(".secrets/ntu_cool_browser_profile"),
     headless: bool = False,
     skip_pdfs: bool = False, skip_pages: bool = False,
+    skip_announcements: bool = False,
     skip_youtube: bool = False, skip_cool_videos: bool = False,
     all_file_types: bool = False,
     sso_timeout_sec: int = 600,
@@ -1122,8 +1140,18 @@ def download_course(
         def _run_with_session_retry(stage_fn, label: str) -> StageStats:
             return _api_call_with_session_retry(stage_fn, label)
 
+        if not skip_announcements:
+            print(t("\n[1/5] 公告內容", "\n[1/5] Announcements"))
+            course_stats.announcements = _run_with_session_retry(
+                lambda c: save_announcements(plan, c), t("公告", "announcements")
+            )
+            print(t(
+                f"  儲存 {course_stats.announcements.done} 則公告、失敗 {len(course_stats.announcements.failed)}",
+                f"  saved {course_stats.announcements.done} announcements, failed {len(course_stats.announcements.failed)}",
+            ))
+
         if not skip_pdfs:
-            print(t("\n[1/4] PDF 檔案", "\n[1/4] PDFs / Files"))
+            print(t("\n[2/5] PDF 檔案", "\n[2/5] PDFs / Files"))
             course_stats.pdfs = _run_with_session_retry(
                 lambda c: download_files(plan, c, all_file_types=all_file_types), t("PDF", "files")
             )
@@ -1132,7 +1160,7 @@ def download_course(
                 f"  downloaded {course_stats.pdfs.done}, skipped {course_stats.pdfs.skipped}, failed {len(course_stats.pdfs.failed)}",
             ))
         if not skip_pages:
-            print(t("\n[2/4] Page 內容", "\n[2/4] Pages"))
+            print(t("\n[3/5] Page 內容", "\n[3/5] Pages"))
             course_stats.pages = _run_with_session_retry(
                 lambda c: save_pages(plan, c, course_id), t("Page", "pages")
             )
@@ -1141,7 +1169,7 @@ def download_course(
                 f"  saved {course_stats.pages.done}, skipped {course_stats.pages.skipped}, failed {len(course_stats.pages.failed)}",
             ))
         if not skip_youtube:
-            print(t("\n[3/4] YouTube 影片", "\n[3/4] YouTube videos"))
+            print(t("\n[4/5] YouTube 影片", "\n[4/5] YouTube videos"))
             yt_cookies_path = yt_cookies or Path(".secrets/youtube_cookies.txt")
             # Strategy: just try to download. Most class YouTube content is
             # public, so most users never need cookies — asking up front
@@ -1196,7 +1224,7 @@ def download_course(
                     ))
 
         if not skip_cool_videos:
-            print(t("\n[4/4] NTU 上課影片 (cool-video)", "\n[4/4] NTU CDN videos (cool-video)"))
+            print(t("\n[5/5] NTU 上課影片 (cool-video)", "\n[5/5] NTU CDN videos (cool-video)"))
             if browser is not None:
                 course_stats.cool_videos = capture_and_download_cool_videos_in_page(
                     plan, browser.page, browser.captured,
@@ -1222,11 +1250,12 @@ def download_course(
             line_zh = f"  {label_zh}  新增 {s.done}、跳過 {s.skipped}、失敗 {len(s.failed)}"
             line_en = f"  {label_en}  {s.done} new, {s.skipped} skipped, {len(s.failed)} failed"
             print(t(line_zh, line_en))
+        _row("公告:      ", "Announcements:", course_stats.announcements)
         _row("PDF:       ", "PDFs:        ", course_stats.pdfs)
         _row("Page:      ", "Pages:       ", course_stats.pages)
         _row("YouTube:   ", "YouTube:     ", course_stats.youtube)
         _row("上課影片:  ", "Cool-video:  ", course_stats.cool_videos)
-        all_failures = (course_stats.pdfs.failed + course_stats.pages.failed
+        all_failures = (course_stats.announcements.failed + course_stats.pdfs.failed + course_stats.pages.failed
                         + course_stats.youtube.failed + course_stats.cool_videos.failed)
         if all_failures:
             print(t(f"\n失敗清單 ({len(all_failures)} 筆):", f"\nFailures ({len(all_failures)}):"))
