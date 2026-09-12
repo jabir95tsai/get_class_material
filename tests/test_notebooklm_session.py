@@ -7,11 +7,40 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from playwright.sync_api import sync_playwright
-from ntu_cool_materials.notebooklm_browser import NotebookLMBrowser, NotebookChoice, startup_error
+from ntu_cool_materials.notebooklm_browser import NotebookLMBrowser, NotebookChoice, startup_error, GoogleLoginRejected, is_google_rejected_url
 from ntu_cool_materials.notebooklm_flow import guided_import
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_google_rejection_stops_without_wait_or_retry(self):
+        browser = NotebookLMBrowser(Path("unused"))
+        browser.page = MagicMock()
+        browser.page.is_closed.return_value = False
+        browser.page.url = "https://accounts.google.com/v3/signin/rejected?continue=private"
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(GoogleLoginRejected) as caught:
+            browser.login()
+        self.assertNotIn("private", str(caught.exception))
+        browser.page.wait_for_timeout.assert_not_called()
+        browser.page.get_by_role.assert_not_called()
+        self.assertFalse(browser._logged_in)
+
+    def test_rejection_detection_checks_host_and_path_not_query(self):
+        self.assertFalse(is_google_rejected_url("https://example.com/v3/signin/rejected"))
+        self.assertFalse(is_google_rejected_url("https://accounts.google.com/v3/signin/identifier?continue=/signin/rejected"))
+        self.assertTrue(is_google_rejected_url("https://accounts.google.com/v3/signin/rejected"))
+
+    def test_google_rejection_notice_detected_without_rejected_url(self):
+        browser = NotebookLMBrowser(Path("unused"))
+        browser.page = MagicMock()
+        browser.page.is_closed.return_value = False
+        browser.page.url = "https://accounts.google.com/v3/signin/identifier"
+        notice = browser.page.get_by_text.return_value
+        notice.count.return_value = 1
+        notice.nth.return_value.is_visible.return_value = True
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(GoogleLoginRejected):
+            browser.login()
+        browser.page.wait_for_timeout.assert_not_called()
+
     def test_reuses_active_real_runtime_without_starting_nested_driver(self):
         with tempfile.TemporaryDirectory() as tmp, sync_playwright() as pw:
             context = MagicMock()

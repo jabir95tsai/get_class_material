@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .notebooklm import NotebookLMError, build_import_plan, import_plan, validate_notebook_url
 from .storage import sha256_file
-from .notebooklm_browser import NotebookLMBrowser
+from .notebooklm_browser import GoogleLoginRejected, NotebookLMBrowser
 
 
 def choose(prompt: str, choices: set[str], default: str) -> str:
@@ -21,6 +21,19 @@ def choose(prompt: str, choices: set[str], default: str) -> str:
         if value in choices or value == "q":
             return value
         print("請輸入列出的選項，或 q 取消。")
+
+
+def offer_normal_browser(output: Path | None, notebook_url: str | None = None) -> None:
+    if not output:
+        return
+    print("請在平常的瀏覽器登入 NotebookLM → 新增或開啟筆記本 → 新增來源 → 上傳檔案。"
+          "選取 batch 資料夾內的教材；此步驟需要你自行完成，程式不會自動上傳。")
+    if choose("用系統預設瀏覽器開啟 NotebookLM？[Y/n]：", {"y", "n"}, "y") == "y":
+        try:
+            if not webbrowser.open(notebook_url or "https://notebooklm.google.com/"):
+                print("請自行在瀏覽器開啟 https://notebooklm.google.com/")
+        except (webbrowser.Error, OSError):
+            print("請自行在瀏覽器開啟 https://notebooklm.google.com/")
 
 
 def prepare_manual_upload(course_dir: Path, *, include_media: bool = False,
@@ -126,19 +139,18 @@ def guided_import(course_dir: Path, *, profile_dir: Path, notebook_url: str | No
                 return 0
         except Exception as exc:
             print(str(exc) if isinstance(exc, NotebookLMError) else "NotebookLM 操作未完成；請確認網路、登入及來源清單。")
-            print("教材已保留。若曾開始上傳，先在 NotebookLM 核對來源，避免手動重複上傳。")
+            if isinstance(exc, GoogleLoginRejected):
+                print("本次在登入階段停止，尚未建立筆記本或上傳教材。")
+            else:
+                print("教材已保留。若曾開始上傳，先在 NotebookLM 核對來源，避免手動重複上傳。")
             if choose("改成準備手動上傳資料夾？[y/N]：", {"y", "n"}, "n") != "y":
                 return 1
             # A fallback cannot turn an unconfirmed automatic upload into success.
-            prepare_manual_upload(plan.root, include_media=include_media, max_sources=max_sources)
+            output = prepare_manual_upload(plan.root, include_media=include_media, max_sources=max_sources)
+            offer_normal_browser(output, notebook_url)
             return 1
     output = prepare_manual_upload(plan.root, include_media=include_media, max_sources=max_sources)
-    if output and choose("開啟 NotebookLM 網頁？[Y/n]：", {"y", "n"}, "y") == "y":
-        try:
-            if not webbrowser.open(notebook_url or "https://notebooklm.google.com/"):
-                print("請自行在瀏覽器開啟 https://notebooklm.google.com/")
-        except webbrowser.Error:
-            print("請自行在瀏覽器開啟 https://notebooklm.google.com/")
+    offer_normal_browser(output, notebook_url)
     return 0
 
 

@@ -23,6 +23,16 @@ ERROR = re.compile(r"error|failed|unsupported|錯誤|失敗|不支援", re.I)
 BUSY = re.compile(r"progress_activity|pending|processing|uploading|處理中|上傳中", re.I)
 
 
+class GoogleLoginRejected(NotebookLMError):
+    """Google refused this sign-in surface; retries cannot repair the flow."""
+
+
+def is_google_rejected_url(url: str) -> bool:
+    parsed = urlsplit(url)
+    return parsed.hostname == "accounts.google.com" and bool(
+        re.search(r"/signin/rejected(?:/|$)", parsed.path))
+
+
 @dataclass
 class NotebookChoice:
     title: str
@@ -100,6 +110,16 @@ class NotebookLMBrowser:
             while time.monotonic() < deadline:
                 if self.page.is_closed():
                     raise NotebookLMError("NotebookLM 瀏覽器已關閉。")
+                rejected = is_google_rejected_url(self.page.url)
+                if not rejected and urlsplit(self.page.url).hostname == "accounts.google.com":
+                    notice = self.page.get_by_text(re.compile(
+                        r"This browser or app may not be secure|這個瀏覽器或應用程式可能不安全|此瀏覽器或應用程式可能不安全", re.I))
+                    rejected = any(notice.nth(i).is_visible() for i in range(notice.count()))
+                if rejected:
+                    raise GoogleLoginRejected(
+                        "Google 已拒絕此自動化瀏覽器登入，無法繼續自動掃描或上傳。"
+                        "請改用系統預設瀏覽器登入 NotebookLM，並使用分批上傳資料夾。"
+                        "重新安裝 Chromium 不會解除這項登入限制。")
                 # Never perform notebook actions on an account/consent page.
                 if urlsplit(self.page.url).hostname in {"notebooklm.google.com", "notebook.google.com"}:
                     if self._button(ADD) or self._button(CREATE):

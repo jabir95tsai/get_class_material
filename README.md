@@ -67,6 +67,14 @@ ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --no
 若缺少瀏覽器，執行 `python -m playwright install chromium`。
 Google 若拒絕自動化瀏覽器登入，本功能便無法完成匯入；不會繞過登入限制。
 
+**看到「Couldn't sign you in / This browser or app may not be secure」時：**
+從 0.2.22 起，程式會立即辨識 Google 的登入拒絕頁並停止，不再等滿登入逾時。
+選擇準備手動上傳資料夾後，可以直接開啟系統預設瀏覽器，在 NotebookLM 新增或開啟筆記本，
+再選「新增來源 → 上傳檔案」。登入被拒時無法自動掃描筆記本；本次尚未建立筆記本或上傳教材。
+此修正改善拒絕後的處理流程，**不會解除 Google 的登入限制**。
+也可直接選引導中的 `1`，使用正常瀏覽器手動上傳，避免再次走入自動登入。
+參考：[Google 支援的登入瀏覽器](https://support.google.com/accounts/answer/7675428)。
+
 每個課程資料夾首次匯入時會建立一本筆記本；之後依課程根目錄的
 `.notebooklm-import.json` 重用同一本。若網頁名稱欄位可辨識，會使用課程資料夾名稱；
 否則會提示你在網頁改名。也可以用 `--notebooklm-url` 指定已有筆記本。

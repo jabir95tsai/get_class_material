@@ -8,9 +8,27 @@ from unittest.mock import patch, MagicMock
 from ntu_cool_materials import cli
 from ntu_cool_materials.notebooklm import NotebookLMError, STATE_NAME, build_import_plan
 from ntu_cool_materials.notebooklm_flow import guided_import, prepare_manual_upload, select_course_folder
+from ntu_cool_materials.notebooklm_browser import GoogleLoginRejected
 
 
 class PublicFlowTests(unittest.TestCase):
+    def test_rejected_login_closes_context_then_offers_normal_browser(self):
+        self.browser.login.side_effect = GoogleLoginRejected("Google 已拒絕登入")
+        with patch("sys.stdin.isatty", return_value=True), \
+             patch("builtins.input", side_effect=["2", "y", "y"]), \
+             patch("ntu_cool_materials.notebooklm_flow.import_plan") as importer, \
+             patch("ntu_cool_materials.notebooklm_flow.webbrowser.open") as open_browser:
+            def opened(url):
+                self.browser_factory.return_value.__exit__.assert_called_once()
+                return True
+            open_browser.side_effect = opened
+            self.assertEqual(guided_import(self.root, profile_dir=self.profile), 1)
+            importer.assert_not_called()
+            self.browser.list_notebooks.assert_not_called()
+            open_browser.assert_called_once_with("https://notebooklm.google.com/")
+        self.assertFalse((self.root / STATE_NAME).exists())
+        self.assertTrue((self.root / ".notebooklm-manual").exists())
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -67,7 +85,7 @@ class PublicFlowTests(unittest.TestCase):
         self.assertEqual(automatic.call_args.kwargs["notebook_url"], url)
 
     def test_failed_upload_with_fallback_still_returns_failure(self):
-        with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", side_effect=["2", "n", "y", "y"]), \
+        with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", side_effect=["2", "n", "y", "y", "n"]), \
              patch("ntu_cool_materials.notebooklm_flow.import_plan", side_effect=NotebookLMError("登入未完成")):
             self.assertEqual(guided_import(self.root, profile_dir=self.profile), 1)
         self.assertTrue((self.root / ".notebooklm-manual").exists())
