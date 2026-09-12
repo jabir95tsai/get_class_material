@@ -151,6 +151,15 @@ class NotebookLMTests(unittest.TestCase):
         state = json.loads((self.root / STATE_NAME).read_text(encoding="utf-8"))
         self.assertEqual(set(state["notebooks"]), {URL, OTHER_URL})
 
+    def test_explicit_new_ignores_existing_course_mapping(self):
+        self.file()
+        plan = build_import_plan(self.root)
+        import_plan(plan, FakeBrowser(), notebook_url=OTHER_URL)
+        browser = FakeBrowser()
+        result = import_plan(plan, browser, force_new=True)
+        self.assertIsNone(browser.open_calls[0][0])
+        self.assertEqual(result.notebook_url, URL)
+
     def test_capacity_includes_existing_remote_sources(self):
         self.file()
         browser = FakeBrowser()

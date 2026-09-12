@@ -163,7 +163,7 @@ def _import_lock(root: Path):
 
 
 def import_plan(plan: ImportPlan, browser: BrowserAdapter, *, notebook_url: str | None = None,
-                max_sources: int = 50) -> ImportResult:
+                max_sources: int = 50, force_new: bool = False) -> ImportResult:
     if max_sources < 1:
         raise NotebookLMError("來源上限必須大於零。")
     if not plan.sources:
@@ -173,7 +173,7 @@ def import_plan(plan: ImportPlan, browser: BrowserAdapter, *, notebook_url: str 
     with _import_lock(plan.root):
         path = plan.root / STATE_NAME
         state = _read_state(path)
-        target = notebook_url or state.get("default_url")
+        target = notebook_url or (None if force_new else state.get("default_url"))
         url = validate_notebook_url(browser.open_notebook(target, plan.root.name))
         state["default_url"] = url
         record = state["notebooks"].setdefault(url, {"sources": {}})["sources"]
@@ -220,7 +220,8 @@ def import_plan(plan: ImportPlan, browser: BrowserAdapter, *, notebook_url: str 
 
 
 def run_import(course_dir: Path, *, profile_dir: Path, notebook_url: str | None = None,
-               include_media: bool = False, dry_run: bool = False, max_sources: int = 50) -> ImportResult:
+               include_media: bool = False, dry_run: bool = False, max_sources: int = 50,
+               playwright=None) -> ImportResult:
     if max_sources < 1:
         raise NotebookLMError("來源上限必須大於零。")
     if notebook_url:
@@ -238,7 +239,7 @@ def run_import(course_dir: Path, *, profile_dir: Path, notebook_url: str | None 
         return ImportResult()
     from .notebooklm_browser import NotebookLMBrowser
     try:
-        with NotebookLMBrowser(profile_dir) as browser:
+        with NotebookLMBrowser(profile_dir, playwright=playwright) as browser:
             result = import_plan(plan, browser, notebook_url=notebook_url, max_sources=max_sources)
     except NotebookLMError:
         raise

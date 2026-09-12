@@ -7,8 +7,9 @@ import tempfile
 import webbrowser
 from pathlib import Path
 
-from .notebooklm import NotebookLMError, build_import_plan, run_import, validate_notebook_url
+from .notebooklm import NotebookLMError, build_import_plan, import_plan, validate_notebook_url
 from .storage import sha256_file
+from .notebooklm_browser import NotebookLMBrowser
 
 
 def choose(prompt: str, choices: set[str], default: str) -> str:
@@ -60,7 +61,7 @@ def prepare_manual_upload(course_dir: Path, *, include_media: bool = False,
 
 
 def guided_import(course_dir: Path, *, profile_dir: Path, notebook_url: str | None = None,
-                  include_media: bool = False, max_sources: int = 50) -> int:
+                  include_media: bool = False, max_sources: int = 50, playwright=None) -> int:
     if not sys.stdin.isatty():
         raise NotebookLMError("互動引導需要終端機。自動化請傳入 --course-dir 與明確參數；預覽可加 --dry-run。")
     plan = build_import_plan(course_dir, include_media=include_media)
@@ -75,33 +76,56 @@ def guided_import(course_dir: Path, *, profile_dir: Path, notebook_url: str | No
     if mode == "q":
         return 0
     if mode == "2":
-        if not notebook_url:
-            target = choose("筆記本：1) 每門課自動建立／重用  2) 貼上已有筆記本網址 [1/2]：", {"1", "2"}, "1")
-            if target == "q":
-                return 0
-            if target == "2":
-                while True:
-                    try:
-                        raw = input("請貼上筆記本網址（q 取消）：").strip()
-                    except (EOFError, KeyboardInterrupt):
-                        return 0
-                    if raw.lower() == "q":
-                        return 0
-                    try:
-                        notebook_url = validate_notebook_url(raw)
-                        break
-                    except NotebookLMError as exc:
-                        print(str(exc))
-        print("接下來會將這門課的候選教材上傳至你的 Google NotebookLM。"
-              "請只上傳有權使用的教材；登入狀態只保存在你的電腦。")
-        if choose("開始上傳？[y/N]：", {"y", "n"}, "n") != "y":
-            return 0
         try:
-            run_import(plan.root, profile_dir=profile_dir, notebook_url=notebook_url,
-                       include_media=include_media, max_sources=max_sources)
-            return 0
-        except (NotebookLMError, OSError) as exc:
-            print(str(exc) if isinstance(exc, NotebookLMError) else "本機檔案存取失敗。")
+            # Login and inventory precede target selection and upload consent.
+            with NotebookLMBrowser(profile_dir, playwright=playwright) as browser:
+                browser.login()
+                force_new = False
+                if not notebook_url:
+                    while True:
+                        notebooks = browser.list_notebooks()
+                        print("\n目前畫面可辨識的筆記本：")
+                        for index, notebook in enumerate(notebooks, 1):
+                            print(f"  {index}) {notebook.title}")
+                        if not notebooks:
+                            print("未讀取到筆記本；可能尚未建立、仍在載入，或網頁介面已變動。")
+                        print("n) 新增筆記本  p) 貼上筆記本網址  r) 重新掃描  q) 取消")
+                        answer = choose("選擇筆記本編號或操作：", {str(i) for i in range(1, len(notebooks) + 1)} | {"n", "p", "r"}, "q")
+                        if answer == "q":
+                            return 0
+                        if answer == "r":
+                            continue
+                        if answer == "n":
+                            force_new = True
+                            break
+                        if answer == "p":
+                            try:
+                                raw = input("筆記本網址（q 取消）：").strip()
+                            except (EOFError, KeyboardInterrupt):
+                                return 0
+                            if raw.lower() == "q":
+                                return 0
+                            try:
+                                notebook_url = validate_notebook_url(raw)
+                            except NotebookLMError as exc:
+                                print(str(exc))
+                                continue
+                        else:
+                            selected = notebooks[int(answer) - 1]
+                            notebook_url = browser.select_notebook(selected)
+                            print(f"已選取：{selected.title}")
+                        break
+                print("接下來會將這門課的候選教材上傳至選取的 Google NotebookLM 筆記本。")
+                if force_new:
+                    print(f"將新增筆記本：{plan.root.name}")
+                if choose("開始上傳？[y/N]：", {"y", "n"}, "n") != "y":
+                    return 0
+                result = import_plan(plan, browser, notebook_url=notebook_url,
+                                     max_sources=max_sources, force_new=force_new)
+                print(f"NotebookLM：新增 {result.uploaded}，已存在 {result.unchanged}。")
+                return 0
+        except Exception as exc:
+            print(str(exc) if isinstance(exc, NotebookLMError) else "NotebookLM 操作未完成；請確認網路、登入及來源清單。")
             print("教材已保留。若曾開始上傳，先在 NotebookLM 核對來源，避免手動重複上傳。")
             if choose("改成準備手動上傳資料夾？[y/N]：", {"y", "n"}, "n") != "y":
                 return 1

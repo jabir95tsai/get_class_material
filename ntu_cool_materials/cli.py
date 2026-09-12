@@ -775,12 +775,12 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                 all_file_types=args.all_file_types,
             )
             if getattr(args, "notebooklm", False):
-                if _cmd_notebooklm(plan.course_dir, args):
+                if _cmd_notebooklm(plan.course_dir, args, playwright=browser.pw if browser else None):
                     notebooklm_failed = True
             elif not getattr(args, "no_notebooklm", False) and sys.stdin.isatty():
                 from .notebooklm_flow import choose
                 if choose("\n要將這門課匯入 NotebookLM 嗎？[y/N]：", {"y", "n"}, "n") == "y":
-                    if _cmd_notebooklm(plan.course_dir, args, guided=True):
+                    if _cmd_notebooklm(plan.course_dir, args, guided=True, playwright=browser.pw if browser else None):
                         notebooklm_failed = True
         except RuntimeError as exc:
             print(t(f"下載失敗: {exc}", f"download failed: {exc}"))
@@ -1084,7 +1084,7 @@ def _cmd_download_course(base_url: str, args: argparse.Namespace) -> int:
         return 1
 
 
-def _cmd_notebooklm(course_dir: Path | None, args: argparse.Namespace, *, guided: bool = False) -> int:
+def _cmd_notebooklm(course_dir: Path | None, args: argparse.Namespace, *, guided: bool = False, playwright=None) -> int:
     from .notebooklm import run_import
     try:
         from .notebooklm_flow import guided_import, prepare_manual_upload, select_course_folder
@@ -1099,6 +1099,7 @@ def _cmd_notebooklm(course_dir: Path | None, args: argparse.Namespace, *, guided
                 course_dir, profile_dir=Path(args.notebooklm_profile),
                 notebook_url=args.notebooklm_url, include_media=args.notebooklm_include_media,
                 max_sources=args.notebooklm_max_sources,
+                playwright=playwright,
             )
         if getattr(args, "manual", False):
             prepare_manual_upload(course_dir, include_media=args.notebooklm_include_media,
@@ -1110,6 +1111,7 @@ def _cmd_notebooklm(course_dir: Path | None, args: argparse.Namespace, *, guided
             include_media=args.notebooklm_include_media,
             max_sources=args.notebooklm_max_sources,
             dry_run=getattr(args, "dry_run", False),
+            playwright=playwright,
         )
         return 0
     except (RuntimeError, OSError, ValueError) as exc:

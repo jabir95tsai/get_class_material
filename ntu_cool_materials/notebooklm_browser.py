@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urljoin, urlsplit
 
 from .notebooklm import NotebookLMError, validate_notebook_url
 
@@ -21,21 +23,45 @@ ERROR = re.compile(r"error|failed|unsupported|錯誤|失敗|不支援", re.I)
 BUSY = re.compile(r"progress_activity|pending|processing|uploading|處理中|上傳中", re.I)
 
 
+@dataclass
+class NotebookChoice:
+    title: str
+    url: str | None = None
+    card: object = None
+
+
+def startup_error(exc: Exception) -> str:
+    """Classify without echoing driver logs, profile contents, or session URLs."""
+    message = str(exc).lower()
+    if "sync api inside the asyncio loop" in message:
+        return "瀏覽器執行環境衝突：請更新程式，或使用獨立 notebooklm 指令重試。"
+    if "executable doesn't exist" in message or "playwright install" in message:
+        return "尚未安裝 Playwright Chromium。請執行 python -m playwright install chromium。"
+    if any(word in message for word in ("processsingleton", "singletonlock", "profile appears to be in use", "user data directory is already in use")):
+        return "NotebookLM 設定檔正被其他瀏覽器使用；請關閉該專用瀏覽器後再試。"
+    if isinstance(exc, PermissionError) or "permission denied" in message or "access is denied" in message:
+        return "無權限開啟 NotebookLM 瀏覽器或設定檔；請確認安裝位置與資料夾權限。"
+    return "NotebookLM 瀏覽器啟動失敗（原因未能分類）。請確認瀏覽器安裝與系統限制；此錯誤不代表一定缺少 Chromium。"
+
+
 class NotebookLMBrowser:
-    def __init__(self, profile_dir: Path, *, login_timeout: int = 600, upload_timeout: int = 180):
+    def __init__(self, profile_dir: Path, *, login_timeout: int = 600, upload_timeout: int = 180, playwright=None):
         self.profile_dir = profile_dir.expanduser().resolve()
         self.login_timeout = login_timeout
         self.upload_timeout = upload_timeout
-        self._pw = None
+        self._pw = playwright
+        self._owns_pw = playwright is None
         self.context = None
         self.page = None
         self._created_empty = False
+        self._logged_in = False
 
     def __enter__(self):
         try:
             from playwright.sync_api import sync_playwright
             self.profile_dir.mkdir(parents=True, exist_ok=True)
-            self._pw = sync_playwright().start()
+            if self._owns_pw:
+                self._pw = sync_playwright().start()
             self.context = self._pw.chromium.launch_persistent_context(
                 str(self.profile_dir), headless=False, locale="en-US",
             )
@@ -43,16 +69,18 @@ class NotebookLMBrowser:
             self.page.set_default_timeout(15000)
             return self
         except Exception as exc:
-            self.__exit__(None, None, None)
-            raise NotebookLMError("無法開啟 NotebookLM 專用瀏覽器。請先執行 python -m playwright install chromium，"
-                                  "並確認同一個專用設定檔沒有被其他程式使用。") from exc
+            try:
+                self.__exit__(None, None, None)
+            except Exception:
+                pass
+            raise NotebookLMError(startup_error(exc)) from exc
 
     def __exit__(self, *_):
         try:
             if self.context:
                 self.context.close()
         finally:
-            if self._pw:
+            if self._pw and self._owns_pw:
                 self._pw.stop()
 
     def _button(self, pattern):
@@ -63,10 +91,9 @@ class NotebookLMBrowser:
                 return candidate
         return None
 
-    def open_notebook(self, url: str | None, title: str) -> str:
-        target = validate_notebook_url(url) if url else HOME
+    def login(self) -> None:
         try:
-            self.page.goto(target, wait_until="domcontentloaded")
+            self.page.goto(HOME, wait_until="domcontentloaded")
             print("請在開啟的專用瀏覽器完成 Google 登入；登入狀態會留在本機設定檔。"
                   "若 Google 拒絕此瀏覽器登入，請停止匯入；不要提供密碼給程式。")
             deadline = time.monotonic() + self.login_timeout
@@ -74,13 +101,64 @@ class NotebookLMBrowser:
                 if self.page.is_closed():
                     raise NotebookLMError("NotebookLM 瀏覽器已關閉。")
                 # Never perform notebook actions on an account/consent page.
-                from urllib.parse import urlsplit
                 if urlsplit(self.page.url).hostname in {"notebooklm.google.com", "notebook.google.com"}:
                     if self._button(ADD) or self._button(CREATE):
+                        self._logged_in = True
                         break
                 self.page.wait_for_timeout(500)
             else:
                 raise NotebookLMError("Google 登入尚未完成或 NotebookLM 介面無法辨識。")
+        except NotebookLMError:
+            raise
+        except Exception as exc:
+            raise NotebookLMError("NotebookLM 登入未完成；請檢查網路或瀏覽器是否已關閉。") from exc
+
+    def list_notebooks(self) -> list[NotebookChoice]:
+        """Scan only visible home-page UI; never access private RPC or auth state."""
+        if not self._logged_in:
+            self.login()
+        if urlsplit(self.page.url).path not in {"", "/"}:
+            self.page.goto(HOME, wait_until="domcontentloaded")
+        self.page.get_by_role("button", name=CREATE).first.wait_for(state="visible")
+        choices = []
+        seen = set()
+        anchors = self.page.locator('a[href*="/notebook/"]')
+        for index in range(anchors.count()):
+            link = anchors.nth(index)
+            if not link.is_visible():
+                continue
+            try:
+                url = validate_notebook_url(urljoin(self.page.url, link.get_attribute("href") or ""))
+            except NotebookLMError:
+                continue
+            if url not in seen:
+                seen.add(url)
+                choices.append(NotebookChoice(link.inner_text().strip() or "未命名筆記本", url))
+        # Some versions render notebook tiles as components rather than links.
+        if not choices:
+            cards = self.page.locator("project-button")
+            for index in range(cards.count()):
+                card = cards.nth(index)
+                title = card.locator(".project-button-title")
+                if card.is_visible() and title.count() == 1:
+                    choices.append(NotebookChoice(title.inner_text().strip(), card=card))
+        return choices
+
+    def select_notebook(self, choice: NotebookChoice) -> str:
+        if choice.url:
+            return validate_notebook_url(choice.url)
+        try:
+            choice.card.click()
+            self.page.wait_for_url(re.compile(r"https://(?:notebooklm|notebook)\.google\.com/notebook/"))
+            return validate_notebook_url(self.page.url)
+        except Exception as exc:
+            raise NotebookLMError("無法開啟選取的筆記本；請重新掃描或貼上筆記本網址。") from exc
+
+    def open_notebook(self, url: str | None, title: str) -> str:
+        target = validate_notebook_url(url) if url else HOME
+        try:
+            if not self._logged_in:
+                self.login()
             if url:
                 # A login redirect can land on the home page instead of the target.
                 self.page.goto(target, wait_until="domcontentloaded")
@@ -89,6 +167,8 @@ class NotebookLMBrowser:
                 if actual.rsplit("/", 1)[-1] != target.rsplit("/", 1)[-1]:
                     raise NotebookLMError("未能開啟指定筆記本，請確認帳號與存取權。")
             else:
+                self.page.goto(HOME, wait_until="domcontentloaded")
+                self.page.get_by_role("button", name=CREATE).first.wait_for(state="visible")
                 create = self._button(CREATE)
                 if create is None:
                     raise NotebookLMError("找不到建立筆記本按鈕。請手動建立後傳入 --notebooklm-url。")
