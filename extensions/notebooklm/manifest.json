@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "NTU COOL to NotebookLM",
+  "version": "0.1.0",
+  "description": "將本機選定課程透過已登入的 NotebookLM 網頁自動匯入。",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "scripting",
+    "storage",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "https://notebooklm.google.com/*",
+    "https://notebook.google.com/*"
+  ],
+  "background": {
+    "service_worker": "worker.js"
+  },
+  "action": {
+    "default_title": "開啟 NotebookLM 匯入工作頁",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnPK+trvacsftdX1aWcX4zhJ5Zuqlykh7J1wvnR5N5nnNoyp/Pj3/M3yqlfvTRzAk8ubVh8ATP6RZqKlMHGGSLbU6Lza3bibnEzTK37X3pEM1LHYVBJHFTys+gy1hwH7ch6f5xWs7Ec4zirTkQ5f5hxvcVxdTooo7EC9wMP04uueBxtPcQIrCw3VIJWmy5LCCAyY4BkZ31x4mGtZiULDMwwD9+o5Wf6TFOXYcIHyMfxLpvA0dJrw+GU7VH8p0+aI7tcZc8nnzYjmROiJm1ZT1VKJ/bab15TMvP3zS4ROs3B9GERA/wb/RsHlfqB4DogaZ2nJfGVI9WNM/IUM9zxrkSQIDAQAB"
+}

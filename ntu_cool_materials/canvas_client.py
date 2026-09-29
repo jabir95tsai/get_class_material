@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import time
 import urllib.error
 import urllib.parse
@@ -10,6 +9,8 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from .http_io import NoRedirectHandler, download, request_json, safe_url
 
 
 JSON = dict[str, Any] | list[Any]
@@ -40,11 +41,6 @@ class SessionExpiredError(CanvasAPIError):
 
     def __init__(self, message: str) -> None:
         super().__init__(message, status_code=401)
-
-
-class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
-        return None
 
 
 def parse_link_header(value: str | None) -> dict[str, str]:
@@ -199,46 +195,19 @@ class CanvasClient:
         data, _headers = self._request_json(self._build_url(path_or_url, params=params))
         return data
 
-    def download_file_url(self, file_url: str, target_path: Path) -> Path:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = target_path.with_name(f"{target_path.name}.part")
-        current_url = self._build_url(file_url)
-
-        response = None
-        for _redirect_count in range(10):
-            request = urllib.request.Request(current_url, headers=self._download_headers(current_url))
-            try:
-                response = self._download_opener.open(request, timeout=self.timeout)
-                break
-            except urllib.error.HTTPError as exc:
-                if exc.code not in {301, 302, 303, 307, 308}:
-                    raise self._api_error(exc, current_url) from exc
-
-                location = exc.headers.get("Location")
-                if not location:
-                    raise CanvasAPIError(f"Canvas redirected without a Location header: {current_url}")
-                current_url = urllib.parse.urljoin(current_url, location)
-        else:
-            raise CanvasAPIError(f"Too many redirects while downloading {file_url}")
-
-        assert response is not None
-        with response, temp_path.open("wb") as output:
-            shutil.copyfileobj(response, output)
-
-        temp_path.replace(target_path)
-        return target_path
-
-    def _request_json(self, url: str) -> tuple[JSON, urllib.request._headers]:  # type: ignore[name-defined]
-        request = urllib.request.Request(url, headers=self._json_headers(url))
+    def download_file_url(self, file_url: str, target_path: Path, *, expected_size=None) -> Path:
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                charset = response.headers.get_content_charset() or "utf-8"
-                body = response.read().decode(charset)
-                return json.loads(body), response.headers
+            return download(self._build_url(file_url), target_path, self._download_headers, timeout=self.timeout, expected_size=int(expected_size) if expected_size is not None else None)
+        except urllib.error.HTTPError as exc:
+            raise self._api_error(exc, file_url) from exc
+
+    def _request_json(self, url: str):
+        try:
+            return request_json(url, self._json_headers, timeout=self.timeout, api_origin=self.base_url)
         except urllib.error.HTTPError as exc:
             raise self._api_error(exc, url) from exc
-        except json.JSONDecodeError as exc:
-            raise CanvasAPIError(f"Canvas returned invalid JSON from {url}") from exc
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise CanvasAPIError(f"Canvas returned invalid JSON from {safe_url(url)}") from exc
 
     def _json_headers(self, url: str) -> dict[str, str]:
         headers = {
@@ -277,15 +246,8 @@ class CanvasClient:
 
     @staticmethod
     def _api_error(exc: urllib.error.HTTPError, url: str) -> CanvasAPIError:
-        detail = ""
-        try:
-            detail = exc.read().decode("utf-8", errors="replace").strip()
-        except Exception:
-            detail = ""
-
-        message = f"Canvas request failed with HTTP {exc.code} for {url}"
-        if detail:
-            message = f"{message}: {detail[:500]}"
+        message = f"Canvas request failed with HTTP {exc.code} for {safe_url(url)}"
+        exc.close()
         if exc.code == 401:
             return SessionExpiredError(message)
         return CanvasAPIError(message, status_code=exc.code)

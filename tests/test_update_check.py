@@ -125,5 +125,61 @@ class CheckForUpdateTests(unittest.TestCase):
         self.assertEqual(data["last_check"], 1234.0)
 
 
+class YtDlpUpdateTests(unittest.TestCase):
+    def test_version_age_calculation(self) -> None:
+        import datetime
+        now = datetime.date(2026, 9, 29)
+        self.assertEqual(update_check.yt_dlp_version_age_days("2026.08.19", now=now), 41)
+        self.assertEqual(update_check.yt_dlp_version_age_days("2026.04.10.235301", now=now), 172)
+        self.assertEqual(update_check.yt_dlp_version_age_days("2026.4.10.235301.dev0", now=now), 172)
+        self.assertIsNone(update_check.yt_dlp_version_age_days("invalid"))
+        self.assertIsNone(update_check.yt_dlp_version_age_days(""))
+
+    def test_ensure_yt_dlp_updated_skips_when_fresh(self) -> None:
+        import datetime
+        from unittest import mock
+        now = datetime.date(2026, 9, 29)
+        with mock.patch("ntu_cool_materials.update_check.get_yt_dlp_version", return_value="2026.08.19"):
+            with mock.patch("ntu_cool_materials.update_check.update_yt_dlp") as mock_update:
+                updated = update_check.ensure_yt_dlp_updated("yt-dlp", max_age_days=60, now=now)
+                self.assertFalse(updated)
+                mock_update.assert_not_called()
+
+    def test_ensure_yt_dlp_updated_triggers_when_old(self) -> None:
+        import datetime
+        from unittest import mock
+        now = datetime.date(2026, 9, 29)
+        with mock.patch("ntu_cool_materials.update_check.get_yt_dlp_version", return_value="2026.04.10"):
+            with mock.patch("ntu_cool_materials.update_check.update_yt_dlp", return_value=(True, "ok")) as mock_update:
+                updated = update_check.ensure_yt_dlp_updated("yt-dlp", max_age_days=60, now=now)
+                self.assertTrue(updated)
+                mock_update.assert_called_once_with("yt-dlp")
+
+    def test_update_yt_dlp_pip_success(self) -> None:
+        from unittest import mock
+        mock_proc = mock.Mock(returncode=0)
+        with mock.patch("subprocess.run", return_value=mock_proc):
+            with mock.patch("ntu_cool_materials.update_check.get_yt_dlp_version", return_value="2026.8.19"):
+                ok, msg = update_check.update_yt_dlp("yt-dlp")
+                self.assertTrue(ok)
+                self.assertIn("pip", msg)
+
+    def test_update_yt_dlp_pip_fails_fallback_succeeds(self) -> None:
+        from unittest import mock
+        def fake_run(cmd, **kwargs):
+            if "-m" in cmd and "pip" in cmd:
+                return mock.Mock(returncode=1)
+            if "-U" in cmd:
+                return mock.Mock(returncode=0)
+            return mock.Mock(returncode=1)
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            with mock.patch("shutil.which", return_value="yt-dlp"):
+                with mock.patch("ntu_cool_materials.update_check.get_yt_dlp_version", return_value="2026.8.19"):
+                    ok, msg = update_check.update_yt_dlp("yt-dlp")
+                    self.assertTrue(ok)
+                    self.assertIn("yt-dlp -U", msg)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -89,6 +89,38 @@ class AnnouncementPipelineTests(unittest.TestCase):
             self.assertFalse(_build_parser().parse_args(args).skip_announcements)
             self.assertTrue(_build_parser().parse_args(args + ["--skip-announcements"]).skip_announcements)
 
+    def test_announcements_skip_unchanged_on_subsequent_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            course = {"id": 123, "name": "Test"}
+            plan = pipeline.CoursePlan(course, "123", Path(tmp) / course_directory_name(course))
+            client = mock.Mock()
+            client.list_course_announcements.return_value = [
+                {"id": 1, "title": "A1", "message": "First", "updated_at": "2026-01-01T00:00:00Z"}
+            ]
+            first = pipeline.save_announcements(plan, client)
+            self.assertEqual(first.done, 1)
+            self.assertEqual(first.skipped, 0)
+
+            second = pipeline.save_announcements(plan, client)
+            self.assertEqual(second.done, 0)
+            self.assertEqual(second.skipped, 1)
+
+            client.list_course_announcements.return_value = [
+                {"id": 1, "title": "A1", "message": "First", "updated_at": "2026-01-01T00:00:00Z"},
+                {"id": 2, "title": "A2", "message": "Second", "updated_at": "2026-01-02T00:00:00Z"},
+            ]
+            third = pipeline.save_announcements(plan, client)
+            self.assertEqual(third.done, 1)
+            self.assertEqual(third.skipped, 1)
+
+            client.list_course_announcements.return_value = [
+                {"id": 1, "title": "A1 (edited)", "message": "First updated", "updated_at": "2026-01-03T00:00:00Z"},
+                {"id": 2, "title": "A2", "message": "Second", "updated_at": "2026-01-02T00:00:00Z"},
+            ]
+            fourth = pipeline.save_announcements(plan, client)
+            self.assertEqual(fourth.done, 1)
+            self.assertEqual(fourth.skipped, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

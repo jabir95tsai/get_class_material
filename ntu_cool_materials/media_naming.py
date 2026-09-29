@@ -6,6 +6,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from .storage import WINDOWS_RESERVED_NAMES
 
 YOUTUBE_ID_RE = re.compile(
     r"(?:youtu\.be/|youtube\.com/(?:watch\?[^ \n\r\t]+?v=|embed/|shorts/))([A-Za-z0-9_-]{11})"
@@ -106,6 +107,8 @@ def sanitize_teacher_title(value: str, *, max_length: int = 160) -> str:
     normalized = unicodedata.normalize("NFC", value).strip()
     cleaned = "".join("_" if ord(char) < 32 or char in WINDOWS_UNSAFE_CHARS else char for char in normalized)
     cleaned = " ".join(cleaned.split()).strip(" .")
+    if cleaned.split(".", 1)[0].upper() in WINDOWS_RESERVED_NAMES:
+        cleaned = "_" + cleaned
     if len(cleaned) > max_length:
         cleaned = cleaned[:max_length].rstrip(" .")
     return cleaned or "untitled"

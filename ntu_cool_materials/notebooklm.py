@@ -1,7 +1,7 @@
-"""Opt-in, resumable uploads to personal NotebookLM through its browser UI.
+"""Opt-in, resumable uploads to personal NotebookLM through transport adapters.
 
-No Canvas cookies, private RPC endpoints, or Google credential exports are used.
-The browser adapter is deliberately isolated from local planning and journaling.
+No Canvas cookies are used. Browser and optional unofficial API transports are
+deliberately isolated from local planning and journaling.
 """
 from __future__ import annotations
 
@@ -72,6 +72,11 @@ def validate_notebook_url(value: str) -> str:
     return f"https://{parsed.hostname}{parsed.path.rstrip('/')}"
 
 
+def strip_legacy_hash(title: str) -> str:
+    """Strip legacy 8-64 hex char hash suffix like ' [11b37d6cafc0]' before the file extension."""
+    return re.sub(r" \[[0-9a-fA-F]{8,64}\](?=\.[^.]+$|$)", "", title)
+
+
 def build_import_plan(course_dir: Path, *, include_media: bool = False) -> ImportPlan:
     root = course_dir.expanduser().resolve()
     if not root.is_dir():
@@ -79,6 +84,7 @@ def build_import_plan(course_dir: Path, *, include_media: bool = False) -> Impor
     plan = ImportPlan(root)
     allowed = DOCUMENT_TYPES | (MEDIA_TYPES if include_media else set())
     seen: set[str] = set()
+    used_titles: set[str] = set()
     def fail_scan(exc):
         raise NotebookLMError("無法讀取教材資料夾，請檢查檔案存取權。") from exc
 
@@ -107,9 +113,22 @@ def build_import_plan(course_dir: Path, *, include_media: bool = False) -> Impor
                 plan.skipped.append((relative, "內容相同"))
                 continue
             seen.add(digest)
-            label = sanitize_component(str(Path(relative).with_suffix("")).replace("\\", " - ")
-                                       .replace("/", " - "), max_length=90)
-            title = f"{label} [{digest[:12]}]{path.suffix.lower()}"
+            parts = Path(relative).with_suffix("").parts
+            if len(parts) >= 2 and parts[-1].casefold() == parts[-2].casefold():
+                parts = parts[:-1]
+            label = sanitize_component(" - ".join(parts), max_length=90)
+            if relative in ("announcements/announcements.md", "announcements.md") or label == "announcements":
+                base_title = "announcements"
+                suffix = ""
+            else:
+                base_title = f"{label}{path.suffix.lower()}"
+                suffix = path.suffix.lower()
+            title = base_title
+            counter = 2
+            while title in used_titles:
+                title = f"{label} ({counter}){suffix}"
+                counter += 1
+            used_titles.add(title)
             plan.sources.append(Source(path, relative, digest, title))
     return plan
 
@@ -183,14 +202,28 @@ def import_plan(plan: ImportPlan, browser: BrowserAdapter, *, notebook_url: str 
         pending: list[Source] = []
         for source in plan.sources:
             previous = record.get(source.digest)
-            title = previous["title"] if previous else source.title
-            if title in ready:
+            if previous and (source.title in ready or previous.get("title") in ready):
+                title = source.title if source.title in ready else previous["title"]
                 record[source.digest] = {"title": title, "status": "complete"}
                 result.unchanged += 1
-            elif previous and previous["status"] == "pending":
+            elif previous and previous.get("status") == "pending":
                 raise NotebookLMError(
                     f"先前上傳結果不明：{source.relative_path}。請在筆記本確認來源是否處理完成；"
                     "不會自動重送。若已確定不存在，才刪除紀錄中對應的 pending 項目後重試。")
+            elif source.title in ready:
+                old_digests = [d for d, entry in record.items() if entry.get("title") == source.title and d != source.digest]
+                if old_digests:
+                    stem = Path(source.title).stem
+                    suffix = Path(source.title).suffix
+                    counter = 2
+                    new_title = f"{stem} ({counter}){suffix}"
+                    while new_title in ready:
+                        counter += 1
+                        new_title = f"{stem} ({counter}){suffix}"
+                    pending.append(Source(source.path, source.relative_path, source.digest, new_title))
+                else:
+                    record[source.digest] = {"title": source.title, "status": "complete"}
+                    result.unchanged += 1
             else:
                 pending.append(source)
         _save_state(path, state)
@@ -200,7 +233,8 @@ def import_plan(plan: ImportPlan, browser: BrowserAdapter, *, notebook_url: str 
         for source in pending:
             # Stage an immutable snapshot with a deterministic, collision-resistant name.
             with tempfile.TemporaryDirectory(prefix=".notebooklm-upload-", dir=plan.root) as tmp:
-                staged = Path(tmp) / source.title
+                staged_name = source.title if Path(source.title).suffix else f"{source.title}{source.path.suffix}"
+                staged = Path(tmp) / staged_name
                 shutil.copyfile(source.path, staged)
                 if sha256_file(staged) != source.digest:
                     raise NotebookLMError(f"檔案已變動，請重新執行：{source.relative_path}")

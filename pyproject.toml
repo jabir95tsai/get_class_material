@@ -37,7 +37,8 @@ Repository = "https://github.com/jabir95tsai/get_class_material"
 Issues = "https://github.com/jabir95tsai/get_class_material/issues"
 
 [project.optional-dependencies]
-dev = ["build", "twine"]
+dev = ["build", "twine", "Pillow>=10"]
+notebooklm = ["notebooklm-py[browser]==0.8.3"]
 
 [project.scripts]
 ntu-cool-materials = "ntu_cool_materials.cli:main"
@@ -45,6 +46,7 @@ ntu-cool-gcm = "ntu_cool_materials.cli:pick_main"
 ntu-cool-video = "ntu_cool_materials.cool_video:main"
 ntu-cool-session = "ntu_cool_materials.browser_session:main"
 youtube-cookies = "ntu_cool_materials.youtube_cookies:main"
+ntu-cool-notebooklm-host = "ntu_cool_materials.notebooklm_native_host:main"
 
 [tool.setuptools.packages.find]
 include = ["ntu_cool_materials*"]

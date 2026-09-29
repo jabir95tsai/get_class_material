@@ -5,7 +5,8 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Protocol
 
-from .announcements import html_to_text
+from .announcements import html_to_markdown
+from .storage import atomic_write_text
 from .media_naming import sanitize_teacher_title
 
 
@@ -24,7 +25,7 @@ def fetch_page(client: _PageClient, course_id: str, slug: str) -> dict[str, Any]
 
 def page_markdown(page: dict[str, Any]) -> str:
     title = page.get("title") or page.get("url") or "(untitled)"
-    body = html_to_text(page.get("body"))
+    body = html_to_markdown(page.get("body"), base_url=page.get("html_url") or "https://cool.ntu.edu.tw/")
     parts = [f"# {title}"]
     if body:
         parts.append("")
@@ -40,6 +41,6 @@ def write_page(out_dir: Path, page: dict[str, Any]) -> tuple[Path, Path]:
     )
     json_path = out_dir / f"{stem}.json"
     md_path = out_dir / f"{stem}.md"
-    json_path.write_text(json.dumps(page, ensure_ascii=False, indent=2), encoding="utf-8")
-    md_path.write_text(page_markdown(page), encoding="utf-8")
+    atomic_write_text(json_path, json.dumps(page, ensure_ascii=False, indent=2))
+    atomic_write_text(md_path, page_markdown(page))
     return json_path, md_path

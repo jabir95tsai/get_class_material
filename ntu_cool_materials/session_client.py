@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .http_io import request_json, safe_url
 from .canvas_client import CanvasAPIError, NoRedirectHandler, SessionExpiredError, parse_link_header
 
 
@@ -197,16 +198,12 @@ class CanvasSessionClient:
                 time.sleep(0.05)
 
     def _request_json(self, url: str) -> tuple[list[Any] | dict[str, Any], urllib.request._headers]:  # type: ignore[name-defined]
-        request = urllib.request.Request(url, headers=self._request_headers(url))
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                charset = response.headers.get_content_charset() or "utf-8"
-                body = response.read().decode(charset)
-                return json.loads(body), response.headers
+            return request_json(url, self._request_headers, timeout=self.timeout, api_origin=self.base_url)
         except urllib.error.HTTPError as exc:
             raise self._api_error(exc, url) from exc
-        except json.JSONDecodeError as exc:
-            raise CanvasAPIError(f"Canvas returned invalid JSON from {url}") from exc
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise CanvasAPIError(f"Canvas returned invalid JSON from {safe_url(url)}") from exc
 
     def _request_headers(self, url: str) -> dict[str, str]:
         if not self._is_canvas_origin(url):
@@ -243,15 +240,8 @@ class CanvasSessionClient:
 
     @staticmethod
     def _api_error(exc: urllib.error.HTTPError, url: str) -> CanvasAPIError:
-        detail = ""
-        try:
-            detail = exc.read().decode("utf-8", errors="replace").strip()
-        except Exception:
-            detail = ""
-
-        message = f"Canvas session request failed with HTTP {exc.code} for {url}"
-        if detail:
-            message = f"{message}: {detail[:500]}"
+        message = f"Canvas session request failed with HTTP {exc.code} for {safe_url(url)}"
+        exc.close()
         if exc.code == 401:
             return SessionExpiredError(message)
         return CanvasAPIError(message, status_code=exc.code)

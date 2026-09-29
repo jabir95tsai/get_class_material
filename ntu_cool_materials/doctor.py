@@ -343,7 +343,26 @@ def check_playwright_chromium() -> CheckResult:
 def check_yt_dlp() -> CheckResult:
     if _has("yt-dlp"):
         code, line = _run(["yt-dlp", "--version"])
-        return CheckResult(name="yt-dlp", ok=code == 0, detail=line if code == 0 else "")
+        if code == 0:
+            ver = line.strip()
+            from .update_check import yt_dlp_version_age_days
+            age = yt_dlp_version_age_days(ver)
+            if age is not None and age >= 60:
+                detail = t(
+                    f"{ver} (已發布 {age} 天，建議更新)",
+                    f"{ver} ({age} days old, update recommended)",
+                )
+                return CheckResult(
+                    name="yt-dlp",
+                    ok=True,
+                    detail=detail,
+                    fix_command=f"{sys.executable} -m pip install --upgrade yt-dlp",
+                    auto_install=lambda: _stream_subprocess(
+                        [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
+                        "更新 yt-dlp",
+                    ),
+                )
+            return CheckResult(name="yt-dlp", ok=True, detail=ver)
     return CheckResult(
         name="yt-dlp",
         ok=False,
@@ -560,7 +579,11 @@ def run_doctor(
         _emit(c)
 
     if fix:
-        broken = [c for c in checks if not c.ok and c.auto_install is not None]
+        broken = [
+            c for c in checks
+            if (not c.ok or (c.name == "yt-dlp" and ("建議更新" in str(c.detail) or "update recommended" in str(c.detail))))
+            and c.auto_install is not None
+        ]
         if broken:
             print(t(
                 f"\n嘗試自動修復 {len(broken)} 個項目...",

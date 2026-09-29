@@ -7,8 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from playwright.sync_api import sync_playwright
-from ntu_cool_materials.notebooklm_browser import NotebookLMBrowser, NotebookChoice, startup_error, GoogleLoginRejected, is_google_rejected_url
-from ntu_cool_materials.notebooklm_flow import guided_import
+from ntu_cool_materials.notebooklm_browser import NotebookLMBrowser, startup_error, GoogleLoginRejected, is_google_rejected_url
 
 
 class RuntimeTests(unittest.TestCase):
@@ -95,47 +94,6 @@ class RuntimeTests(unittest.TestCase):
             result = startup_error(RuntimeError(message))
             self.assertIn(expected, result)
             self.assertNotIn("private-details", result)
-
-
-class GuidedSelectionTests(unittest.TestCase):
-    def test_login_scan_select_confirm_import_in_order(self):
-        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
-            root = Path(tmp)
-            (root / "notes.md").write_text("Notes", encoding="utf-8")
-            events = []
-            url = "https://notebooklm.google.com/notebook/existing"
-            with patch("ntu_cool_materials.notebooklm_flow.NotebookLMBrowser") as factory, \
-                 patch("ntu_cool_materials.notebooklm_flow.import_plan") as importer, \
-                 patch("sys.stdin.isatty", return_value=True):
-                browser = factory.return_value.__enter__.return_value
-                browser.login.side_effect = lambda: events.append("login")
-                browser.list_notebooks.side_effect = lambda: (events.append("scan") or [NotebookChoice("My course", url)])
-                browser.select_notebook.side_effect = lambda choice: (events.append("select") or choice.url)
-                importer.side_effect = lambda *a, **k: (events.append("import") or MagicMock())
-                answers = iter(["2", "1", "y"])
-                def answer(prompt):
-                    if "編號" in prompt:
-                        self.assertEqual(events, ["login", "scan"])
-                    if "開始上傳" in prompt:
-                        events.append("confirm")
-                    return next(answers)
-                with patch("builtins.input", side_effect=answer):
-                    self.assertEqual(guided_import(root, profile_dir=root / ".secrets"), 0)
-                self.assertEqual(events, ["login", "scan", "select", "confirm", "import"])
-                self.assertEqual(importer.call_args.kwargs["notebook_url"], url)
-                self.assertFalse(importer.call_args.kwargs["force_new"])
-
-    def test_cancel_after_login_never_creates_notebook_or_uploads(self):
-        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
-            root = Path(tmp)
-            (root / "notes.md").write_text("Notes", encoding="utf-8")
-            with patch("ntu_cool_materials.notebooklm_flow.NotebookLMBrowser") as factory, \
-                 patch("ntu_cool_materials.notebooklm_flow.import_plan") as importer, \
-                 patch("sys.stdin.isatty", return_value=True), patch("builtins.input", side_effect=["2", "q"]):
-                factory.return_value.__enter__.return_value.list_notebooks.return_value = []
-                self.assertEqual(guided_import(root, profile_dir=root / ".secrets"), 0)
-                importer.assert_not_called()
-                factory.return_value.__exit__.assert_called_once()
 
 
 if __name__ == "__main__":

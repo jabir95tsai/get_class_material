@@ -13,26 +13,53 @@ ntu-cool-gcm
 
 ## 自動匯入個人版 NotebookLM（實驗功能）
 
-從 0.2.20 起提供此功能。執行 `pip install --upgrade get-class-material` 更新後，
-即可使用以下指令；原始碼開發者可在本專案資料夾執行 `pip install -e .`。
+預設使用非官方 `notebooklm-py` API，固定測試版本 `0.8.3`。不需要操作擴充套件或模擬拖放。
 
-### 一般使用者流程
+**Windows 原始碼安裝：**雙擊 `Install-NotebookLM.cmd`，首次再執行 `Login-NotebookLM.cmd`，自行在獨立 Chrome 視窗登入 Google。完成後雙擊 `Start-NotebookLM.cmd` 選課匯入。已登入過的本機設定檔會直接沿用。
+
+其他環境可在同一 Python 環境安裝及登入：
+
+```sh
+python -m pip install ".[notebooklm]"
+notebooklm login
+ntu-cool-materials notebooklm
+```
+
+登入狀態由 `notebooklm-py` 保存在本機。Windows 啟動器使用專案的 `.secrets/notebooklm-api`；CLI 可用 `NOTEBOOKLM_HOME` 或 `--notebooklm-storage` 指定。不要提交或分享登入檔案。程式不會從日常 Chrome 擷取 Cookie；登入失效時請重新執行登入程式。
+
+舊版擴充套件可用 `--extension` 明確選用，說明見 [擴充套件 README](extensions/notebooklm/README.md)。`--browser` 保留舊版瀏覽器自動化；`--manual` 準備手動上傳資料夾。
+
+成功使用本機 API 登入後，會將登入檔的絕對路徑記錄在 `~/.ntu-cool-gcm/notebooklm-storage.json`（只記錄位置，不複製憑證），之後從其他目錄啟動 `gcm` 也能沿用。明確指定的登入參數及目前目錄的登入設定仍優先；刪除這個位置紀錄即可取消跨目錄沿用。
+
+### CMD 無點擊流程
+
+在專案目錄執行（登入狀態有效時，不需點擊瀏覽器或擴充套件）：
+
+```bat
+rem 下載指定課程，完成後直接 API 匯入
+Download-and-Import.cmd --course-id 60804
+
+rem 僅匯入已下載教材
+Start-NotebookLM.cmd --course-id 60804
+
+rem 僅核對遠端，不上傳
+Start-NotebookLM.cmd --course-id 60804 --verify-only
+```
+
+指定 ID 後不顯示選課或筆記本選單：已有課程對應就重用，否則以課程名稱新建筆記本。可加 `--notebooklm-url` 指定自己的筆記本。命令完成後直接回到 CMD，以退出碼回報成功或失敗，不會停在「按任意鍵」。下載命令使用背景瀏覽器處理需要瀏覽器的影片，停用互動重試；登入失效時需另外完成登入。未帶課程參數的 `Start-NotebookLM.cmd` 仍提供互動選課。
+
+### 互動選課流程
 
 1. 執行 `ntu-cool-gcm`，用自己的台大帳號登入、選課下載。
 2. 下載完成後回答「要將這門課匯入 NotebookLM 嗎？」；預設否，下載不會自動把教材送到 Google。
-3. 選擇匯入方式：
-   - **分批資料夾**：不需要自動化登入。程式準備好檔案及上傳說明，使用者用自己的正常瀏覽器登入 NotebookLM，按「新增來源 → 上傳檔案」。預設每批最多 50 個來源，已有來源的筆記本需預留額度。
-   - **自動匯入（實驗）**：先在專用瀏覽器登入 Google，程式讀取首頁目前可辨識的筆記本。輸入編號選擇既有筆記本，或選 `n` 新增、`r` 重新掃描、`p` 貼上網址，最後確認上傳。
-4. 自動登入或上傳失敗時，可選擇改產生手動上傳資料夾。已下載教材保留；如果有部分來源已上传，先核對以免重複。
+3. 回答 `y` 就直接開始 API 匯入：沿用此課程已記錄的筆記本，首次則以課程名稱自動建立。不再選筆記本或二次確認。
+4. 終端機顯示匯入結果與筆記本連結。缺少或過期的登入會提示重新登入；上傳失敗時教材仍會保留。
+
+一般 `gcm` 指令也會沿用目前目錄 `.secrets`（不存在時使用家目錄 `.ntu-cool-gcm/.secrets`）內的 `notebooklm-api` API 登入。明確指定 `--notebooklm-storage` 或 SDK 的 `NOTEBOOKLM_HOME`／`NOTEBOOKLM_PROFILE`／`NOTEBOOKLM_AUTH_JSON` 時，以指定設定為準。若都沒有本機登入則使用 SDK 的預設設定檔。API 功能需在執行 `gcm` 的同一 Python 環境安裝 `get-class-material[notebooklm]`。
 
 已有教材的使用者只要執行 `ntu-cool-materials notebooklm`，就能從預設下載目錄選課，
 也可輸入其他資料夾路徑。每位使用者使用自己的帳號與本機設定檔，不需要維護者的 Google 帳號、API key 或 Codex。
 `--no-notebooklm` 可略過下載後的詢問；管線／非互動模式不會自動詢問。
-
-**0.2.21 修正**：下載流程保留 NTU COOL 瀏覽器時，NotebookLM 重用同一個 Playwright
-執行環境，另開獨立 Google 設定檔，不會重複啟動同步驅動或混用 cookies。
-啟動錯誤會區分缺少 Chromium、設定檔占用、權限及執行環境衝突。
-筆記本掃描只涵蓋首頁目前可辨識的項目；若未列出，可在網頁調整顯示後重新掃描，或直接貼上網址。
 
 ```powershell
 # 開啟既有教材匯入引導 / Guided course picker
@@ -53,6 +80,9 @@ ntu-cool-materials download-course --course-id 60804 --notebooklm
 # 已下載教材：先列出候選來源，不登入、不上傳 / Local preview only
 ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --dry-run
 
+# 核對 API 遠端來源與本機紀錄，禁止上傳或建立筆記本 / Remote read-only check
+ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --verify-only
+
 # 匯入同一個資料夾 / Import an existing course folder
 ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)"
 
@@ -60,27 +90,10 @@ ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)"
 ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --notebooklm-url "https://notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID"
 ```
 
-**第一次會開啟獨立瀏覽器，請自行完成 Google 登入。** 登入狀態保存在
-`_secrets_dir()` 對應的 `notebooklm_browser_profile/`，與 NTU COOL 分開。
-不讀取一般 Chrome 設定檔、不匯出 Google cookies、不要求提供密碼。
-這是獨立設定檔，在 Codex 內建瀏覽器登入不會自動登入這個設定檔。
-若缺少瀏覽器，執行 `python -m playwright install chromium`。
-Google 若拒絕自動化瀏覽器登入，本功能便無法完成匯入；不會繞過登入限制。
-
-**看到「Couldn't sign you in / This browser or app may not be secure」時：**
-從 0.2.22 起，程式會立即辨識 Google 的登入拒絕頁並停止，不再等滿登入逾時。
-選擇準備手動上傳資料夾後，可以直接開啟系統預設瀏覽器，在 NotebookLM 新增或開啟筆記本，
-再選「新增來源 → 上傳檔案」。登入被拒時無法自動掃描筆記本；本次尚未建立筆記本或上傳教材。
-此修正改善拒絕後的處理流程，**不會解除 Google 的登入限制**。
-也可直接選引導中的 `1`，使用正常瀏覽器手動上傳，避免再次走入自動登入。
-參考：[Google 支援的登入瀏覽器](https://support.google.com/accounts/answer/7675428)。
-
-每個課程資料夾首次匯入時會建立一本筆記本；之後依課程根目錄的
-`.notebooklm-import.json` 重用同一本。若網頁名稱欄位可辨識，會使用課程資料夾名稱；
-否則會提示你在網頁改名。也可以用 `--notebooklm-url` 指定已有筆記本。
+每個課程資料夾首次直接匯入會以課程名稱建立筆記本；之後依課程根目錄的
+`.notebooklm-import.json` 重用。也可用 `--notebooklm-url` 指定你擁有的筆記本。
+互動引導會顯示目標並要求確認；尚無對應時可從自己的筆記本清單選擇或新增。
 在多選課程時指定同一個 URL，會將這些課程都匯入該筆記本。
-上述自動重用適用於直接帶參數的匯入；互動引導則由使用者登入後選擇目標。
-在引導中明確選 `n` 會建立新的筆記本，不會套用之前的課程對應。
 
 - 預設匯入 PDF、TXT、Markdown、DOCX、PPTX、CSV、EPUB；略過 JSON、metadata、
   隱藏資料夾、目錄摘要、空檔案、連結檔案與超過 200 MB 的檔案。
@@ -98,14 +111,13 @@ Google 若拒絕自動化瀏覽器登入，本功能便無法完成匯入；不�
   程式異常退出若遺留 `.notebooklm-import.lock`，確認沒有匯入程式執行後再移除該鎖。
 - `--dry-run` 只檢查本機候選檔案，不會讀取遠端來源、驗證登入或預估遠端去重結果。
   NotebookLM 仍會檢查每來源字數、檔案內容、方案額度及其他限制。
+- `--verify-only` 需先登入，只讀取既有目標的來源狀態並核對本機紀錄，不建立筆記本、不上傳、不改写匯入紀錄；來源缺少時回傳失敗。
 - 手動資料夾保存在課程內的 `.notebooklm-manual/upload-…/`，畫面會顯示完整路徑。
   每次產生新的一份，不覆寫舊資料；複製檔案會額外占用磁碟空間。
   **準備完成不代表已上傳**，也不會把自動匯入紀錄標示完成。
   若自動匯入失敗後改成手動準備，指令仍回傳失敗狀態，避免自動化誤認上傳成功。
 
-此功能操作**個人版網頁介面，並非 Google 官方 API**。目前測試涵蓋本機規劃、
-匯入紀錄與 CLI 模擬流程；登入及真實上傳仍需實站驗證。支援英文／繁體中文按鈕；
-無法辨識來源清單時會停止並回報失敗，避免把未完成的匯入當成成功。
+API 模式使用**非官方 Google 個人版介面**，不是 Enterprise 官方 API；Google 更新可能導致失效。上傳後會依來源 ID、檔名及 READY 狀態再次核對，保留既有去重與 pending 保護。處理中的同名來源會先等待，狀態不明或失敗則停止，避免重複上傳。
 教材下載完成後即使匯入失敗，本機教材仍會保留，可用獨立指令重試。
 僅匯入你有權上傳至 Google 的教材。
 
@@ -221,7 +233,8 @@ ntu-cool-gcm
 > - 工具本身**從來不會看到密碼**(它只在登入完拿瀏覽器的 cookie)
 > - 不要把密碼貼在 PowerShell、聊天室、或任何其他地方
 
-登入完成後,**不要關閉瀏覽器視窗**,工具會自己處理。
+登入完成並成功讀取課程清單後，工具會自動關閉 NTU COOL 瀏覽器視窗；你不需要保留登入頁面。
+若選到含 NTU cool-video 的課程，程式可能會用同一個登入設定檔短暫重新開啟瀏覽器來取得影片資訊。
 
 ### 第 6 步 — 選課
 
@@ -382,13 +395,27 @@ ntu-cool-gcm --out D:\我的課程
 
 ### Word / PowerPoint / Excel / Zip 等非 PDF 檔
 
-預設會**全部下載**:Word、PowerPoint、Excel、Zip、圖片、影音等檔案會保留原本的副檔名(`.docx` / `.pptx` / `.xlsx` / `.zip` …),可以直接雙擊打開。只有「本來就是 PDF」或「副檔名不明」的檔案才會統一存成 `.pdf`,方便後續餵給 AI 工具。
+預設會**全部下載**，並先查詢 Canvas 檔案資料，保留原本的副檔名，包括 Word、PowerPoint、Excel、Zip、圖片、影片及程式碼檔案。`--all-file-types` 保留供舊指令相容使用。若來源完全沒有副檔名，仍沿用 `.pdf` 備援命名。
 
-如果你想連那些 PDF / 不明副檔名的檔案也保留原始副檔名,可以加:
+### 增量更新、檢查完整性與下載速度
+
+- 使用來源 ID 與課程內的 `.ntu_cool_materials.sqlite3` 記錄檔案版本、大小、SHA-256 和實際路徑；同名教材不會互相略過，模組改變順序也會保留原有路徑。
+- Files 會查詢遠端更新資訊，Pages 每次重新取得內容。沒有變動的教材會跳過；本機大小不符時自動補抓。
+- 舊版檔案沒有來源紀錄時，第一次會重新下載驗證；不會單憑同名就認定完成。請保留 manifest，讓後續更新能正確辨識檔案。
+- 預設同時下載 3 個 Canvas 檔案，可用 `--workers 1` 改為依序下載，最多設定 4。LTI 瀏覽器操作仍依序執行。
+- YouTube 依 video ID 補抓缺少的影片，並利用課程內的 `.media-cache/` 避免同一影片跨週重抓。此快取會占用額外磁碟空間；下載完成且程式停止後可刪除，需要時會重建。
+- Pages／公告保留連結與圖片網址，並抓取其中可識別、同一 Canvas 網站的檔案附件。外部網站只保留連結，不會遞迴下載整個網站。
+- 每次正常完成流程會寫入 `download_report.json`。部分失敗會回傳退出碼 1；互動選單只將成功的課程標記完成。非互動執行遇到登入過期會失敗退出，可加 `--refresh-session` 重新登入。
 
 ```powershell
-ntu-cool-gcm --all-file-types
+# 額外檢查本機內容雜湊 / Verify local SHA-256 before skipping
+ntu-cool-gcm --verify-files
+
+# 限制並行數 / Limit simultaneous file transfers
+ntu-cool-materials download-course --course-id 57544 --workers 2
 ```
+
+影片通常以來源 ID 識別；如果平台直接替換同一 ID 的影片且未提供更新資訊，無法僅靠本機 manifest 察覺遠端內容改變。刪除該本機影片（YouTube 也須刪除 `.media-cache/youtube/` 中對應 ID 的快取影片）後重跑可重新取得；`--verify-files` 用於檢查本機是否損壞，並不代表重新下載所有遠端影片。
 
 ### 已經知道課程 ID(網址裡的數字)
 
@@ -517,8 +544,10 @@ ntu-cool-gcm --refresh-session
 
 **直接再跑一次 `ntu-cool-gcm`** 即可。
 
-- 已下載完的檔案會跳過
-- 大檔影片會從中斷的地方續傳(不用重抓)
+- 已記錄完成且版本／本機大小吻合的檔案會跳過。
+- 伺服器支援 Range，且部分檔案具有吻合的 ETag／Last-Modified 時才續傳；無法確認版本時會安全地重新下載。
+- 暫時性網路錯誤與 429／部分 5xx 最多嘗試 3 次，遵守 Retry-After（最多等 60 秒）。
+- 下載長度與續傳範圍檢查通過後才替換正式檔案；失敗時保留原本完整檔案。
 
 ### Q: 我的檔案到底放在哪
 

@@ -1,0 +1,83 @@
+name: NotebookLM experimental release
+
+on:
+  push:
+    tags:
+      - "notebooklm-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notebooklm-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install package and build tools
+        run: python -m pip install -e ".[dev]"
+      - name: Validate extension tag
+        shell: python
+        run: |
+          import json, os, re
+          version = json.load(open('extensions/notebooklm/manifest.json'))['version']
+          tag = os.environ['GITHUB_REF_NAME']
+          if not re.fullmatch(r'notebooklm-v' + re.escape(version) + r'-alpha\.[1-9][0-9]*', tag):
+              raise SystemExit(f'Expected notebooklm-v{version}-alpha.N (N >= 1)')
+      - name: Python tests
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m unittest discover -s tests -q
+      - name: Extension tests
+        run: node --test tests/notebooklm_extension.test.mjs
+      - name: Build companion wheel and extension
+        run: |
+          python -m build --wheel --outdir release-assets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/build_notebooklm_extension.py --output release-assets/ntu-cool-to-notebooklm.zip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item extensions/notebooklm/README.md release-assets/INSTALL.md
+      - name: Hash release assets
+        shell: python
+        run: |
+          import hashlib
+          from pathlib import Path
+          root = Path('release-assets')
+          lines = [f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n'
+                   for p in sorted(root.iterdir()) if p.is_file()]
+          (root / 'SHA256SUMS.txt').write_text(''.join(lines), encoding='utf-8')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notebooklm-release
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: notebooklm-release
+          path: release-assets
+      - name: Publish experimental GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --verify-tag --prerelease --latest=false \
+            --title "NotebookLM $RELEASE_TAG — 實驗版" \
+            --notes-file docs/notebooklm-release-notes.md

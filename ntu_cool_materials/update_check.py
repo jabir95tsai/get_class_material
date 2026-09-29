@@ -12,7 +12,12 @@ injecting `fetch` and `now`.
 """
 from __future__ import annotations
 
+import datetime
 import json
+import re
+import shutil
+import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -104,3 +109,99 @@ def check_for_update(
     if latest and is_newer(latest, current_version):
         return latest
     return None
+
+
+def yt_dlp_version_age_days(version_str: str, now: datetime.date | None = None) -> int | None:
+    """Calculate the age in days of a yt-dlp release (version is YYYY.MM.DD[.patch])."""
+    if not version_str:
+        return None
+    m = re.match(r"^(\d{4})\.(\d{1,2})\.(\d{1,2})", version_str.strip())
+    if not m:
+        return None
+    try:
+        ver_date = datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        current_date = now or datetime.date.today()
+        return (current_date - ver_date).days
+    except (ValueError, OverflowError):
+        return None
+
+
+def get_yt_dlp_version(yt_dlp: str = "yt-dlp") -> str | None:
+    """Return the installed yt-dlp version string, or None if unavailable."""
+    try:
+        import importlib.metadata
+        return importlib.metadata.version("yt-dlp")
+    except Exception:
+        pass
+    try:
+        res = subprocess.run([yt_dlp, "--version"], capture_output=True, text=True, timeout=5)
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def update_yt_dlp(yt_dlp: str = "yt-dlp") -> tuple[bool, str]:
+    """Attempt to update yt-dlp using pip, falling back to yt-dlp -U.
+
+    Returns (success, message).
+    """
+    # 1. First try python -m pip install --upgrade yt-dlp
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if proc.returncode == 0:
+            # Invalidate importlib caches to reflect newly installed package version
+            import importlib
+            importlib.invalidate_caches()
+            new_ver = get_yt_dlp_version(yt_dlp) or "最新版"
+            return True, f"已透過 pip 升級至 {new_ver}"
+    except Exception:
+        pass
+
+    # 2. Fallback: try yt-dlp -U if executable is on PATH
+    if shutil.which(yt_dlp):
+        try:
+            proc = subprocess.run([yt_dlp, "-U"], capture_output=True, text=True, timeout=120)
+            if proc.returncode == 0:
+                new_ver = get_yt_dlp_version(yt_dlp) or "最新版"
+                return True, f"已透過 yt-dlp -U 升級至 {new_ver}"
+        except Exception:
+            pass
+
+    return False, "更新失敗，請手動執行 pip install --upgrade yt-dlp"
+
+
+def ensure_yt_dlp_updated(
+    yt_dlp: str = "yt-dlp",
+    max_age_days: int = 60,
+    now: datetime.date | None = None,
+) -> bool:
+    """Check if yt-dlp is older than max_age_days. If so, attempt to update it automatically.
+
+    Returns True if an update was successfully performed, False otherwise.
+    """
+    version = get_yt_dlp_version(yt_dlp)
+    if not version:
+        return False
+    age = yt_dlp_version_age_days(version, now=now)
+    if age is None or age < max_age_days:
+        return False
+
+    from .i18n import t
+    print(t(
+        f"  [yt-dlp] 目前版本 ({version}) 已發布超過 {age} 天，正在自動更新至最新版...",
+        f"  [yt-dlp] current version ({version}) is {age} days old, updating automatically...",
+    ))
+    ok, msg = update_yt_dlp(yt_dlp)
+    if ok:
+        print(t(f"  [yt-dlp] {msg}", f"  [yt-dlp] {msg}"))
+        return True
+    else:
+        print(t(f"  [yt-dlp] {msg}", f"  [yt-dlp] {msg}"))
+        return False

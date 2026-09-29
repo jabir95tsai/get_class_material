@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>課程匯入 NotebookLM</title>
+<link rel="stylesheet" href="panel.css">
+<main>
+  <header><span class="eyebrow">NTU COOL · NotebookLM</span><h1>把教材放進你的筆記本</h1>
+  <p>使用你平常的 Google 登入。本頁只操作 NotebookLM，教材由本機程式提供。</p></header>
+  <section><h2>1　連接本機教材</h2>
+    <p>先執行 <code>ntu-cool-gcm</code> 並選課。回答要匯入後，按一次連接即可。</p>
+    <p class="hint">教材只從這台電腦目前執行中的下載程式取得，不使用 Google 密碼或 cookie。</p>
+    <button id="connect">連接目前課程</button>
+    <p id="course" aria-live="polite">尚未連接</p>
+  </section>
+  <section><h2>2　登入並選擇筆記本</h2>
+    <p>開啟 NotebookLM 後自行完成登入，再回來掃描。也可先在網頁開啟目標筆記本。</p>
+    <button id="open" class="secondary">開啟 NotebookLM</button><button id="scan" class="secondary">掃描目前筆記本</button>
+    <label>匯入目標<select id="target"><option value="new">新增一本筆記本</option></select></label>
+    <p class="hint">掃描首頁目前可辨識的筆記本；若清單不完整，可在網頁開啟目標後再掃描。</p>
+  </section>
+  <section><h2>3　自動匯入</h2><p>開始後會將選定課程的候選檔案送到你的 NotebookLM。請保留本頁、NotebookLM 分頁及終端機。</p>
+    <button id="start" disabled>確認並開始自動匯入</button><button id="stop" class="secondary" disabled>停止</button>
+    <p id="status" role="status">等待連接本機教材。</p>
+    <pre id="log" aria-live="polite"></pre>
+  </section>
+  <footer>尚未完成 Google 實站驗證。遇到不明介面或上傳結果不明會停止，不自動重送檔案。</footer>
+</main><script type="module" src="panel.mjs"></script>
+</html>

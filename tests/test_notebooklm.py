@@ -72,8 +72,18 @@ class NotebookLMTests(unittest.TestCase):
         self.file("week3/copy.md", b"First")
         plan = build_import_plan(self.root)
         self.assertEqual(len(plan.sources), 2)
-        self.assertEqual(len({s.title for s in plan.sources}), 2)
+        self.assertEqual({s.title for s in plan.sources}, {"week1 - lecture.md", "week2 - lecture.md"})
         self.assertIn(("week3/copy.md", "內容相同"), plan.skipped)
+
+    def test_sources_do_not_contain_digest_hash_in_titles(self):
+        self.file("announcements/announcements.md", b"Announce")
+        self.file("module1/2026_1 上課前.pdf", b"Pre")
+        plan = build_import_plan(self.root)
+        titles = [s.title for s in plan.sources]
+        self.assertIn("announcements", titles)
+        self.assertIn("module1 - 2026_1 上課前.pdf", titles)
+        for title in titles:
+            self.assertNotRegex(title, r"\[[0-9a-fA-F]{8,64}\]")
 
     def test_media_requires_opt_in_and_empty_files_are_skipped(self):
         self.file("week1/video.mp4")

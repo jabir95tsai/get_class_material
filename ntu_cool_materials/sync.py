@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from .canvas_client import CanvasAPIError, CanvasClient
-from .storage import ManifestStore, course_directory_name, sanitize_component, sha256_file
+from .http_io import DownloadError
+from .storage import atomic_write_text, ManifestStore, course_directory_name, sanitize_component, sha256_file
 
 
 @dataclass
@@ -28,6 +29,7 @@ def sync_course_materials(
     store: ManifestStore,
     include_modules: bool = True,
     dry_run: bool = False,
+    verify_files: bool = False,
 ) -> SyncStats:
     course_id = str(course["id"])
     course_name = _course_name(course)
@@ -39,9 +41,8 @@ def sync_course_materials(
         stats.module_snapshots = 1
         if not dry_run:
             course_dir.mkdir(parents=True, exist_ok=True)
-            (course_dir / "modules.json").write_text(
+            atomic_write_text(course_dir / "modules.json",
                 json.dumps(modules, ensure_ascii=False, indent=2),
-                encoding="utf-8",
             )
 
     for file_info in client.list_course_files(course_id):
@@ -60,7 +61,7 @@ def sync_course_materials(
                 )
             continue
 
-        if not store.needs_download(file_info, target_path):
+        if not store.needs_download(file_info, target_path, verify_hash=verify_files):
             stats.unchanged += 1
             continue
 
@@ -69,7 +70,7 @@ def sync_course_materials(
             continue
 
         try:
-            client.download_file_url(str(file_info["url"]), target_path)
+            client.download_file_url(str(file_info["url"]), target_path, expected_size=file_info.get("size"))
             store.upsert_file(
                 file_info=file_info,
                 course_id=course_id,
@@ -78,7 +79,7 @@ def sync_course_materials(
                 sha256=sha256_file(target_path),
             )
             stats.downloaded += 1
-        except (CanvasAPIError, OSError, KeyError) as exc:
+        except (CanvasAPIError, DownloadError, OSError, KeyError) as exc:
             stats.failed += 1
             print(f"[warn] failed to download {file_info.get('display_name')}: {exc}")
 
