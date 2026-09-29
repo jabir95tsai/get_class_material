@@ -1,7 +1,7 @@
-"""Opt-in, resumable uploads to personal NotebookLM through transport adapters.
+"""Opt-in, resumable uploads to personal NotebookLM.
 
-No Canvas cookies are used. Browser and optional unofficial API transports are
-deliberately isolated from local planning and journaling.
+No Canvas cookies are used. The API transport (notebooklm_api) is deliberately
+isolated from local planning and journaling.
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class ImportResult:
     notebook_url: str = ""
 
 
-class BrowserAdapter(Protocol):
+class NotebookAdapter(Protocol):
     def open_notebook(self, url: str | None, title: str) -> str: ...
     def ready_titles(self) -> set[str]: ...
     def source_count(self) -> int: ...
@@ -181,8 +181,8 @@ def _import_lock(root: Path):
         path.unlink(missing_ok=True)
 
 
-def import_plan(plan: ImportPlan, browser: BrowserAdapter, *, notebook_url: str | None = None,
-                max_sources: int = 50, force_new: bool = False) -> ImportResult:
+def import_plan(plan: ImportPlan, adapter: NotebookAdapter, *, notebook_url: str | None = None,
+                max_sources: int = 50) -> ImportResult:
     if max_sources < 1:
         raise NotebookLMError("來源上限必須大於零。")
     if not plan.sources:
@@ -192,12 +192,12 @@ def import_plan(plan: ImportPlan, browser: BrowserAdapter, *, notebook_url: str 
     with _import_lock(plan.root):
         path = plan.root / STATE_NAME
         state = _read_state(path)
-        target = notebook_url or (None if force_new else state.get("default_url"))
-        url = validate_notebook_url(browser.open_notebook(target, plan.root.name))
+        target = notebook_url or state.get("default_url")
+        url = validate_notebook_url(adapter.open_notebook(target, plan.root.name))
         state["default_url"] = url
         record = state["notebooks"].setdefault(url, {"sources": {}})["sources"]
         _save_state(path, state)  # Save the notebook before starting any upload.
-        ready = browser.ready_titles()
+        ready = adapter.ready_titles()
         result = ImportResult(notebook_url=url)
         pending: list[Source] = []
         for source in plan.sources:
@@ -227,7 +227,7 @@ def import_plan(plan: ImportPlan, browser: BrowserAdapter, *, notebook_url: str 
             else:
                 pending.append(source)
         _save_state(path, state)
-        if browser.source_count() + len(pending) > max_sources:
+        if adapter.source_count() + len(pending) > max_sources:
             raise NotebookLMError("來源數將超過設定上限。請改用另一個筆記本／較小的教材資料夾，"
                                   "或依帳號方案提高 --notebooklm-max-sources。")
         for source in pending:
@@ -241,9 +241,9 @@ def import_plan(plan: ImportPlan, browser: BrowserAdapter, *, notebook_url: str 
                 record[source.digest] = {"title": source.title, "status": "pending"}
                 _save_state(path, state)
                 try:
-                    browser.upload(staged, source.title)
+                    adapter.upload(staged, source.title)
                 except Exception as exc:
-                    # Do not include browser exception text: it may contain session URLs.
+                    # Do not include transport exception text: it may contain session URLs.
                     raise NotebookLMError(f"上傳尚未確認完成：{source.relative_path}。"
                                           "已保留 pending 紀錄，請檢查 NotebookLM 後再執行。") from exc
                 record[source.digest]["status"] = "complete"
@@ -252,32 +252,3 @@ def import_plan(plan: ImportPlan, browser: BrowserAdapter, *, notebook_url: str 
                 print(f"  ✓ {source.relative_path}")
         return result
 
-
-def run_import(course_dir: Path, *, profile_dir: Path, notebook_url: str | None = None,
-               include_media: bool = False, dry_run: bool = False, max_sources: int = 50,
-               playwright=None) -> ImportResult:
-    if max_sources < 1:
-        raise NotebookLMError("來源上限必須大於零。")
-    if notebook_url:
-        notebook_url = validate_notebook_url(notebook_url)
-    plan = build_import_plan(course_dir, include_media=include_media)
-    print(f"NotebookLM：{len(plan.sources)} 個候選來源；{len(plan.skipped)} 個略過。")
-    for relative, reason in plan.skipped:
-        print(f"  略過 {relative}：{reason}")
-    if dry_run:
-        for source in plan.sources:
-            print(f"  候選 {source.relative_path}")
-        print("預覽完成；未開啟瀏覽器、未上傳。遠端來源與帳號配額尚未核對。")
-        return ImportResult()
-    if not plan.sources:
-        return ImportResult()
-    from .notebooklm_browser import NotebookLMBrowser
-    try:
-        with NotebookLMBrowser(profile_dir, playwright=playwright) as browser:
-            result = import_plan(plan, browser, notebook_url=notebook_url, max_sources=max_sources)
-    except NotebookLMError:
-        raise
-    except Exception as exc:
-        raise NotebookLMError("NotebookLM 瀏覽器操作未完成；請檢查登入與來源清單後重試。") from exc
-    print(f"NotebookLM：新增 {result.uploaded}，已存在 {result.unchanged}。")
-    return result

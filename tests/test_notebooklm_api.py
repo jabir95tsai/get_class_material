@@ -195,11 +195,6 @@ class APITests(unittest.TestCase):
                                        "--notebooklm-storage", "auth.json"]), 0)
         self.assertEqual(run.call_args.kwargs["storage_path"], Path("auth.json"))
 
-    def test_cli_legacy_browser_remains_explicit(self):
-        with patch("ntu_cool_materials.notebooklm.run_import") as run:
-            self.assertEqual(cli.main(["notebooklm", "--course-dir", str(self.root), "--browser"]), 0)
-        run.assert_called_once()
-
     def test_course_id_selects_exact_folder_without_prompt(self):
         current = self.root / 'Current course (64660)'
         current.mkdir()

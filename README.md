@@ -13,7 +13,7 @@ ntu-cool-gcm
 
 ## 自動匯入個人版 NotebookLM（實驗功能）
 
-預設使用非官方 `notebooklm-py` API，固定測試版本 `0.8.3`。不需要操作擴充套件或模擬拖放。
+透過非官方 `notebooklm-py` API 匯入（固定測試版本 `0.8.3`），這是唯一的匯入方式。
 
 **Windows 原始碼安裝：**雙擊 `Install-NotebookLM.cmd`，首次再執行 `Login-NotebookLM.cmd`，自行在獨立 Chrome 視窗登入 Google。完成後雙擊 `Start-NotebookLM.cmd` 選課匯入。已登入過的本機設定檔會直接沿用。
 
@@ -27,13 +27,13 @@ ntu-cool-materials notebooklm
 
 登入狀態由 `notebooklm-py` 保存在本機。Windows 啟動器使用專案的 `.secrets/notebooklm-api`；CLI 可用 `NOTEBOOKLM_HOME` 或 `--notebooklm-storage` 指定。不要提交或分享登入檔案。程式不會從日常 Chrome 擷取 Cookie；登入失效時請重新執行登入程式。
 
-舊版擴充套件可用 `--extension` 明確選用，說明見 [擴充套件 README](extensions/notebooklm/README.md)。`--browser` 保留舊版瀏覽器自動化；`--manual` 準備手動上傳資料夾。
+舊版的擴充套件（`--extension`）、自動化瀏覽器（`--browser`）與手動上傳資料夾（`--manual`）已移除。沒有安裝 `notebooklm-py` 時，`ntu-cool-gcm` 下載完成後不會詢問匯入，只會提示一次安裝指令；明確加 `--notebooklm` 則會顯示安裝方式並回傳失敗。
 
 成功使用本機 API 登入後，會將登入檔的絕對路徑記錄在 `~/.ntu-cool-gcm/notebooklm-storage.json`（只記錄位置，不複製憑證），之後從其他目錄啟動 `gcm` 也能沿用。明確指定的登入參數及目前目錄的登入設定仍優先；刪除這個位置紀錄即可取消跨目錄沿用。
 
 ### CMD 無點擊流程
 
-在專案目錄執行（登入狀態有效時，不需點擊瀏覽器或擴充套件）：
+在專案目錄執行（登入狀態有效時，不需點擊瀏覽器）：
 
 ```bat
 rem 下載指定課程，完成後直接 API 匯入
@@ -64,9 +64,6 @@ Start-NotebookLM.cmd --course-id 60804 --verify-only
 ```powershell
 # 開啟既有教材匯入引導 / Guided course picker
 ntu-cool-materials notebooklm
-
-# 純本機準備分批資料夾 / Prepare files without logging in or uploading
-ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --manual
 
 # 指定資料夾，仍顯示引導 / Guided import for a given folder
 ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --guide
@@ -103,7 +100,7 @@ ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --no
 - 來源數預設上限為 50（含筆記本現有來源）。付費個人方案可依實際額度設定
   `--notebooklm-max-sources 100` 等值；這只調整本機檢查，不會提高 Google 帳號額度。
   超過上限會停止；請指定較小的週次資料夾或另一個筆記本。
-- 使用 SHA-256 比對內容。來源名稱會加上週次與短雜湊，以區分不同週的同名講義。
+- 使用 SHA-256 比對內容。來源名稱為「週次 - 檔名」；不同週的同名講義仍可區分，名稱重複時加上 (2)、(3)。
   檔案內容變更後會新增來源並保留遠端舊版本；不會刪除或覆寫遠端來源。
 - 上傳前先記錄 `pending`，只有來源清單顯示已可使用才記錄 `complete`。
   逾時或中斷後，重跑會先確認遠端來源；無法確認時停止，不自動重送。
@@ -112,13 +109,9 @@ ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --no
 - `--dry-run` 只檢查本機候選檔案，不會讀取遠端來源、驗證登入或預估遠端去重結果。
   NotebookLM 仍會檢查每來源字數、檔案內容、方案額度及其他限制。
 - `--verify-only` 需先登入，只讀取既有目標的來源狀態並核對本機紀錄，不建立筆記本、不上傳、不改写匯入紀錄；來源缺少時回傳失敗。
-- 手動資料夾保存在課程內的 `.notebooklm-manual/upload-…/`，畫面會顯示完整路徑。
-  每次產生新的一份，不覆寫舊資料；複製檔案會額外占用磁碟空間。
-  **準備完成不代表已上傳**，也不會把自動匯入紀錄標示完成。
-  若自動匯入失敗後改成手動準備，指令仍回傳失敗狀態，避免自動化誤認上傳成功。
 
 API 模式使用**非官方 Google 個人版介面**，不是 Enterprise 官方 API；Google 更新可能導致失效。上傳後會依來源 ID、檔名及 READY 狀態再次核對，保留既有去重與 pending 保護。處理中的同名來源會先等待，狀態不明或失敗則停止，避免重複上傳。
-教材下載完成後即使匯入失敗，本機教材仍會保留，可用獨立指令重試。
+教材下載完成後即使匯入失敗，本機教材仍會保留；畫面會印出可直接重試的 `ntu-cool-materials notebooklm --course-dir …` 指令。
 僅匯入你有權上傳至 Google 的教材。
 
 維護者發佈前應用全新的設定檔驗證 Google 登入、首次上傳、重跑去重及中斷恢復。

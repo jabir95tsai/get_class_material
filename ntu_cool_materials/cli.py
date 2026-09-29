@@ -319,14 +319,10 @@ def _build_parser() -> argparse.ArgumentParser:
     notebook_course.add_argument("--course-id", help="Import exactly one downloaded course by ID without any selection prompts.")
     notebook.add_argument("--out", default=None, help="Materials root to list in the interactive picker.")
     notebook_mode = notebook.add_mutually_exclusive_group()
-    notebook_mode.add_argument("--dry-run", action="store_true", help="List candidates without opening a browser or uploading.")
-    notebook_mode.add_argument("--guide", action="store_true", help="Interactive login, target and fallback guidance.")
-    notebook_mode.add_argument("--manual", action="store_true", help="Prepare batch folders for manual upload; no Google login.")
-    notebook_mode.add_argument("--extension", action="store_true", help="Use the local Chrome/Edge extension with your normal Google login.")
-    notebook_mode.add_argument("--api", action="store_true", help="Use notebooklm-py API (default); requires a separate NotebookLM login.")
+    notebook_mode.add_argument("--dry-run", action="store_true", help="List candidates without logging in or uploading.")
+    notebook_mode.add_argument("--guide", action="store_true", help="Interactive notebook selection before importing.")
+    notebook_mode.add_argument("--api", action="store_true", help="Compatibility flag: the notebooklm-py API is the only import mode.")
     notebook_mode.add_argument("--verify-only", action="store_true", help="Read-only API check of remote sources and local journal; never upload or create notebooks.")
-    notebook_mode.add_argument("--browser", action="store_true", help="Use the legacy automated-browser adapter.")
-    notebook.add_argument("--extension-port", type=int, default=43821, help="Loopback extension bridge port (default: 43821).")
     for target in (pick, course, notebook):
         if target is not notebook:
             nlm_mode = target.add_mutually_exclusive_group()
@@ -334,8 +330,6 @@ def _build_parser() -> argparse.ArgumentParser:
             nlm_mode.add_argument("--no-notebooklm", action="store_true", help="Skip the NotebookLM offer after downloading.")
         target.add_argument("--notebooklm-url", default=None,
                             help="Existing notebook URL; otherwise reuse the course mapping or create a notebook.")
-        target.add_argument("--notebooklm-profile", default=str(secrets / "notebooklm_browser_profile"),
-                            help="Separate persistent Google browser profile; never uses Canvas cookies.")
         target.add_argument("--notebooklm-storage", default=None,
                             help="API storage_state.json path; otherwise use NOTEBOOKLM_HOME / notebooklm profile settings.")
         target.add_argument("--notebooklm-include-media", action="store_true", help="Also import supported local audio/video files.")
@@ -796,11 +790,24 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
 
     def _import_notebooklm(course_dir: Path) -> None:
         nonlocal notebooklm_failed
-        if _cmd_notebooklm(course_dir, args, playwright=browser.pw if browser else None):
+        if _cmd_notebooklm(course_dir, args):
             notebooklm_failed = True
 
     def _notebooklm_prompt_enabled() -> bool:
-        return not getattr(args, "no_notebooklm", False) and sys.stdin.isatty()
+        nonlocal notebooklm_hint_shown
+        if getattr(args, "no_notebooklm", False) or not sys.stdin.isatty():
+            return False
+        from .notebooklm_api import api_available, install_hint
+        if api_available():
+            return True
+        # Offering an import that can only fail is worse than not asking.
+        if not notebooklm_hint_shown:
+            notebooklm_hint_shown = True
+            print(t(
+                "\n提示：安裝 notebooklm-py 後，下載完成時可直接匯入 NotebookLM：\n",
+                "\nTip: install notebooklm-py to import into NotebookLM after downloading:\n",
+            ) + install_hint())
+        return False
 
     def _run_download(course: dict[str, Any], *, offer_notebooklm: bool = True) -> bool:
         """Download one course. Any course folder produced (even with some
@@ -852,6 +859,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             return False
 
     notebooklm_failed = False
+    notebooklm_hint_shown = False
     course_dirs: dict[str, Path] = {}
     n = len(courses)
     downloaded_in_session: set[str] = set()
@@ -1205,68 +1213,44 @@ def _cmd_download_course(base_url: str, args: argparse.Namespace) -> int:
         return 1
 
 
-def _cmd_notebooklm(course_dir: Path | None, args: argparse.Namespace, *, guided: bool = False, playwright=None) -> int:
-    from .notebooklm import run_import
+def _cmd_notebooklm(course_dir: Path | None, args: argparse.Namespace, *, guided: bool = False) -> int:
     try:
-        from .notebooklm_flow import guided_import, prepare_manual_upload, select_course_folder
+        from .notebooklm_flow import guided_import, select_course_folder
+        from .notebooklm_api import run_api_import
         if course_dir is None:
             course_dir = select_course_folder(_resolve_output_dir(args.out))
             if course_dir is None:
                 return 0
-            # Explicit preview/manual modes are respected after folder selection.
-            guided = not (getattr(args, "dry_run", False) or getattr(args, "manual", False) or getattr(args, "extension", False) or getattr(args, "browser", False) or getattr(args, "verify_only", False))
-        if getattr(args, "extension", False):
-            from .notebooklm_bridge import run_extension_import
-            port = args.extension_port
-            if not 1024 <= port <= 65535:
-                raise ValueError("Invalid extension port")
-            return run_extension_import(course_dir, secrets_dir=_secrets_dir(),
-                                        include_media=args.notebooklm_include_media,
-                                        max_sources=args.notebooklm_max_sources, port=port,
-                                        notebook_url=args.notebooklm_url)
+            # Explicit preview/check modes are respected after folder selection.
+            guided = not (getattr(args, "dry_run", False) or getattr(args, "verify_only", False))
+        storage = Path(args.notebooklm_storage) if getattr(args, "notebooklm_storage", None) else None
         if guided or getattr(args, "guide", False):
             return guided_import(
-                course_dir, profile_dir=Path(args.notebooklm_profile),
-                notebook_url=args.notebooklm_url, include_media=args.notebooklm_include_media,
-                max_sources=args.notebooklm_max_sources,
-                playwright=playwright,
-                storage_path=Path(args.notebooklm_storage) if getattr(args, "notebooklm_storage", None) else None,
+                course_dir, notebook_url=args.notebooklm_url,
+                include_media=args.notebooklm_include_media,
+                max_sources=args.notebooklm_max_sources, storage_path=storage,
             )
-        if getattr(args, "manual", False):
-            prepare_manual_upload(course_dir, include_media=args.notebooklm_include_media,
-                                  max_sources=args.notebooklm_max_sources)
-            return 0
-        if not getattr(args, "browser", False):
-            from .notebooklm_api import run_api_import
-            is_interactive = (
-                sys.stdin.isatty()
-                and not getattr(args, "headless", False)
-                and not getattr(args, "dry_run", False)
-                and not getattr(args, "verify_only", False)
-                and not getattr(args, "notebooklm_url", None)
-            )
-            run_api_import(course_dir, notebook_url=args.notebooklm_url,
-                           include_media=args.notebooklm_include_media,
-                           max_sources=args.notebooklm_max_sources,
-                           dry_run=getattr(args, "dry_run", False),
-                           verify_only=getattr(args, "verify_only", False),
-                           storage_path=Path(args.notebooklm_storage) if getattr(args, "notebooklm_storage", None) else None,
-                           interactive=is_interactive)
-            return 0
-        run_import(
-            course_dir, profile_dir=Path(args.notebooklm_profile),
-            notebook_url=args.notebooklm_url,
-            include_media=args.notebooklm_include_media,
-            max_sources=args.notebooklm_max_sources,
-            dry_run=getattr(args, "dry_run", False),
-            playwright=playwright,
+        is_interactive = (
+            sys.stdin.isatty()
+            and not getattr(args, "headless", False)
+            and not getattr(args, "dry_run", False)
+            and not getattr(args, "verify_only", False)
+            and not getattr(args, "notebooklm_url", None)
         )
+        run_api_import(course_dir, notebook_url=args.notebooklm_url,
+                       include_media=args.notebooklm_include_media,
+                       max_sources=args.notebooklm_max_sources,
+                       dry_run=getattr(args, "dry_run", False),
+                       verify_only=getattr(args, "verify_only", False),
+                       storage_path=storage, interactive=is_interactive)
         return 0
     except (RuntimeError, OSError, ValueError) as exc:
-        # Only our own errors are safe to show; never dump Playwright login URLs.
+        # Only our own errors are safe to show; library errors may carry login URLs.
         from .notebooklm import NotebookLMError
-        detail = str(exc) if isinstance(exc, NotebookLMError) else "本機檔案或瀏覽器操作失敗，請確認路徑和登入狀態。"
+        detail = str(exc) if isinstance(exc, NotebookLMError) else "本機檔案或 NotebookLM 連線失敗，請確認路徑和登入狀態。"
         print(f"NotebookLM 匯入未完成：{detail}")
+        if course_dir is not None:
+            print(f'已下載的教材都保留在本機；修正後可重試：\n  ntu-cool-materials notebooklm --course-dir "{course_dir}"')
         return 1
 
 

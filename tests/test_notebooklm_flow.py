@@ -1,13 +1,15 @@
 import contextlib
 import io
+import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from ntu_cool_materials import cli
-from ntu_cool_materials.notebooklm import NotebookLMError, STATE_NAME, build_import_plan
-from ntu_cool_materials.notebooklm_flow import guided_import, prepare_manual_upload, select_course_folder
+from ntu_cool_materials.notebooklm import NotebookLMError
+from ntu_cool_materials.notebooklm_api import api_client_context
+from ntu_cool_materials.notebooklm_flow import guided_import, select_course_folder
 
 
 class PublicFlowTests(unittest.TestCase):
@@ -15,7 +17,7 @@ class PublicFlowTests(unittest.TestCase):
         with patch("sys.stdin.isatty", return_value=True), \
              patch("builtins.input") as ask, \
              patch("ntu_cool_materials.notebooklm_api.run_api_import", return_value=0) as run:
-            self.assertEqual(guided_import(self.root, profile_dir=self.profile), 0)
+            self.assertEqual(guided_import(self.root), 0)
         ask.assert_not_called()
         self.assertEqual(run.call_args.args[0], self.root)
 
@@ -25,29 +27,33 @@ class PublicFlowTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         for i in range(3):
             (self.root / f"lecture{i}.md").write_text(f"Lecture {i}", encoding="utf-8")
-        self.profile = self.root / ".secrets/profile"
-        self.enterContext(contextlib.redirect_stdout(io.StringIO()))
+        self.output = io.StringIO()
+        self.enterContext(contextlib.redirect_stdout(self.output))
 
-    def test_manual_batches_preserve_bytes_and_do_not_claim_uploaded(self):
-        bundle = prepare_manual_upload(self.root, max_sources=2)
-        self.assertEqual(len(list((bundle / "batch-001").iterdir())), 2)
-        self.assertEqual(len(list((bundle / "batch-002").iterdir())), 1)
-        self.assertFalse((self.root / STATE_NAME).exists())
-        self.assertFalse(self.profile.exists())
-        self.assertIn("尚未上傳", (bundle / "上傳說明.txt").read_text(encoding="utf-8"))
-        self.assertEqual(len(build_import_plan(self.root).sources), 3)
-        again = prepare_manual_upload(self.root)
-        self.assertNotEqual(bundle, again)
+    def test_removed_modes_are_rejected(self):
+        for flag in ("--manual", "--extension", "--browser"):
+            with self.subTest(flag=flag), contextlib.redirect_stderr(io.StringIO()), \
+                 self.assertRaises(SystemExit):
+                cli.main(["notebooklm", "--course-dir", str(self.root), flag])
 
-    def test_manual_cli_needs_no_google_or_canvas_auth(self):
-        with patch("ntu_cool_materials.notebooklm_api.run_api_import") as automatic:
-            self.assertEqual(cli.main(["notebooklm", "--course-dir", str(self.root), "--manual"]), 0)
-        automatic.assert_not_called()
+    def test_failed_import_keeps_materials_and_prints_retry_command(self):
+        with patch("sys.stdin.isatty", return_value=False), \
+             patch("ntu_cool_materials.notebooklm_api.run_api_import", side_effect=NotebookLMError("API failed")):
+            self.assertEqual(cli.main(["notebooklm", "--course-dir", str(self.root)]), 1)
+        self.assertIn("API failed", self.output.getvalue())
+        self.assertIn(f'notebooklm --course-dir "{self.root}"', self.output.getvalue())
+
+    def test_missing_package_explains_how_to_install(self):
+        with patch.dict(sys.modules, {"notebooklm": None}):
+            with self.assertRaises(NotebookLMError) as caught:
+                api_client_context()
+        self.assertIn("get-class-material[notebooklm]", str(caught.exception))
+        self.assertIn(sys.executable, str(caught.exception))
 
     def test_guide_passes_source_options_to_api(self):
         with patch("sys.stdin.isatty", return_value=True), \
              patch("ntu_cool_materials.notebooklm_api.run_api_import", return_value=0) as run:
-            guided_import(self.root, profile_dir=self.profile, include_media=True, max_sources=17)
+            guided_import(self.root, include_media=True, max_sources=17)
         self.assertTrue(run.call_args.kwargs["include_media"])
         self.assertEqual(run.call_args.kwargs["max_sources"], 17)
 
@@ -55,14 +61,14 @@ class PublicFlowTests(unittest.TestCase):
         url = "https://notebooklm.google.com/notebook/example"
         with patch("sys.stdin.isatty", return_value=True), \
              patch("ntu_cool_materials.notebooklm_api.run_api_import", return_value=0) as automatic:
-            self.assertEqual(guided_import(self.root, profile_dir=self.profile, notebook_url=url), 0)
+            self.assertEqual(guided_import(self.root, notebook_url=url), 0)
         self.assertEqual(automatic.call_args.kwargs["notebook_url"], url)
 
     def test_api_failure_propagates_without_extra_prompt(self):
         with patch("sys.stdin.isatty", return_value=True), patch("builtins.input") as ask, \
              patch("ntu_cool_materials.notebooklm_api.run_api_import", side_effect=NotebookLMError("API failed")):
             with self.assertRaises(NotebookLMError):
-                guided_import(self.root, profile_dir=self.profile)
+                guided_import(self.root)
         ask.assert_not_called()
 
     def test_noninteractive_no_folder_fails_without_prompt(self):

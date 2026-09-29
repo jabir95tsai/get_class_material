@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 from ntu_cool_materials.course_pipeline import CoursePlan, WeekPlan, download_files
 from ntu_cool_materials.notebooklm import build_import_plan
-from ntu_cool_materials.notebooklm_flow import prepare_manual_upload
 
 
 class ExcelDownloadImportTests(unittest.TestCase):
@@ -47,10 +46,6 @@ class ExcelDownloadImportTests(unittest.TestCase):
                         imports = build_import_plan(root)
                         self.assertEqual([s.relative_path for s in imports.sources], ["week1/notes.md"])
                         self.assertTrue(any(path == "week1/" + name for path, _ in imports.skipped))
-                        bundle = prepare_manual_upload(root)
-                        uploaded_files = list(bundle.glob("batch-*/*"))
-                        self.assertEqual(len(uploaded_files), 1)
-                        self.assertEqual(uploaded_files[0].suffix, ".md")
                         self.assertEqual((week_dir / name).read_bytes(), body)
 
 

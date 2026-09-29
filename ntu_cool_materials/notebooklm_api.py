@@ -1,11 +1,12 @@
 """NotebookLM API transport for the existing locked, resumable import planner.
 
-Uses the optional unofficial notebooklm-py package. Login is a separate user action;
-this module never extracts browser cookies or starts a browser.
+Uses the optional unofficial notebooklm-py package. Login runs through
+notebooklm-py's own `notebooklm login`; this module never extracts browser cookies.
 """
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
 import json
 import os
@@ -17,6 +18,20 @@ from .notebooklm import (
     ImportResult, NotebookLMError, build_import_plan, import_plan, validate_notebook_url,
     STATE_NAME, _read_state,
 )
+
+
+def api_available() -> bool:
+    """Whether the optional notebooklm-py package is installed in this Python."""
+    return importlib.util.find_spec("notebooklm") is not None
+
+
+def install_hint() -> str:
+    """How to enable NotebookLM import for the Python that is running now."""
+    lines = [f'  "{sys.executable}" -m pip install "get-class-material[notebooklm]"',
+             "  notebooklm login"]
+    if os.name == "nt":
+        lines.append("  （原始碼資料夾也可雙擊 Install-NotebookLM.cmd，再執行 Login-NotebookLM.cmd）")
+    return "\n".join(lines)
 
 
 def _api_home() -> Path:
@@ -92,7 +107,7 @@ def api_client_context(storage_path: Path | None = None):
         from notebooklm import NotebookLMClient
         from notebooklm.options import ClientConfig, RetryOptions, WebBackendConfig
     except ImportError:
-        raise NotebookLMError('請先安裝 API 套件：python -m pip install "get-class-material[notebooklm]"。') from None
+        raise NotebookLMError("尚未安裝 NotebookLM 匯入套件 notebooklm-py。請執行：\n" + install_hint()) from None
     # Mutations with an uncertain response must not be silently replayed.
     config = ClientConfig(backend=WebBackendConfig(), retry=RetryOptions(
         rate_limit_max_retries=0, server_error_max_retries=0))
@@ -220,7 +235,9 @@ class NotebookLMAPIAdapter:
             target_id = validate_notebook_url(url).rsplit("/", 1)[-1]
             chosen = next((n for n in owned if n.id == target_id), None)
             if chosen is None:
-                raise NotebookLMError("指定筆記本不在目前帳號的「我的筆記本」中；已停止，請確認登入帳號及網址。")
+                # Here the URL came from the course's saved mapping, not the user.
+                raise NotebookLMError("這門課先前匯入的筆記本不在目前帳號的「我的筆記本」中（可能已刪除或換了帳號）；"
+                                      "已停止。請用 --guide 重新選擇，或以 --notebooklm-url 指定筆記本。")
         if chosen is None:
             if self.read_only:
                 raise NotebookLMError("唯讀核對不會建立筆記本。")

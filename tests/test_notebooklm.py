@@ -7,11 +7,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from ntu_cool_materials import cli
 from ntu_cool_materials.notebooklm import (
-    STATE_NAME, NotebookLMError, build_import_plan, import_plan, run_import,
+    STATE_NAME, NotebookLMError, build_import_plan, import_plan,
     validate_notebook_url,
 )
 
@@ -19,7 +19,7 @@ URL = "https://notebooklm.google.com/notebook/test-notebook"
 OTHER_URL = "https://notebooklm.google.com/notebook/other-notebook"
 
 
-class FakeBrowser:
+class FakeAdapter:
     def __init__(self):
         self.ready = set()
         self.calls = []
@@ -104,17 +104,16 @@ class NotebookLMTests(unittest.TestCase):
                 validate_notebook_url(url)
         self.assertEqual(validate_notebook_url(URL + "?authuser=0#foo"), URL)
 
-    def test_dry_run_does_not_create_state_or_launch_browser(self):
+    def test_dry_run_does_not_create_state_or_connect(self):
         self.file()
-        with patch("ntu_cool_materials.notebooklm_browser.NotebookLMBrowser") as browser:
-            run_import(self.root, profile_dir=self.root / ".secrets/profile", dry_run=True)
-        browser.assert_not_called()
+        with patch("ntu_cool_materials.notebooklm_api.api_client_context") as connect:
+            self.assertEqual(cli.main(["notebooklm", "--course-dir", str(self.root), "--dry-run"]), 0)
+        connect.assert_not_called()
         self.assertFalse((self.root / STATE_NAME).exists())
-        self.assertFalse((self.root / ".secrets").exists())
 
     def test_success_and_rerun_do_not_duplicate_uploads(self):
         self.file()
-        browser = FakeBrowser()
+        browser = FakeAdapter()
         plan = build_import_plan(self.root)
         self.assertEqual(import_plan(plan, browser).uploaded, 1)
         second = import_plan(plan, browser)
@@ -125,7 +124,7 @@ class NotebookLMTests(unittest.TestCase):
 
     def test_timeout_is_pending_and_does_not_automatically_retry(self):
         self.file()
-        browser = FakeBrowser()
+        browser = FakeAdapter()
         browser.fail = True
         plan = build_import_plan(self.root)
         with self.assertRaises(NotebookLMError) as caught:
@@ -144,7 +143,7 @@ class NotebookLMTests(unittest.TestCase):
 
     def test_remote_deletion_and_local_edit_import_again(self):
         source = self.file()
-        browser = FakeBrowser()
+        browser = FakeAdapter()
         import_plan(build_import_plan(self.root), browser)
         browser.ready.clear()
         self.assertEqual(import_plan(build_import_plan(self.root), browser).uploaded, 1)
@@ -155,24 +154,15 @@ class NotebookLMTests(unittest.TestCase):
     def test_target_notebook_has_independent_journal(self):
         self.file()
         plan = build_import_plan(self.root)
-        import_plan(plan, FakeBrowser())
-        other = FakeBrowser()
+        import_plan(plan, FakeAdapter())
+        other = FakeAdapter()
         self.assertEqual(import_plan(plan, other, notebook_url=OTHER_URL).uploaded, 1)
         state = json.loads((self.root / STATE_NAME).read_text(encoding="utf-8"))
         self.assertEqual(set(state["notebooks"]), {URL, OTHER_URL})
 
-    def test_explicit_new_ignores_existing_course_mapping(self):
-        self.file()
-        plan = build_import_plan(self.root)
-        import_plan(plan, FakeBrowser(), notebook_url=OTHER_URL)
-        browser = FakeBrowser()
-        result = import_plan(plan, browser, force_new=True)
-        self.assertIsNone(browser.open_calls[0][0])
-        self.assertEqual(result.notebook_url, URL)
-
     def test_capacity_includes_existing_remote_sources(self):
         self.file()
-        browser = FakeBrowser()
+        browser = FakeAdapter()
         browser.extra_sources = 50
         with self.assertRaises(NotebookLMError):
             import_plan(build_import_plan(self.root), browser)
@@ -182,7 +172,7 @@ class NotebookLMTests(unittest.TestCase):
         self.file()
         state = self.root / STATE_NAME
         state.write_text("not json", encoding="utf-8")
-        browser = FakeBrowser()
+        browser = FakeAdapter()
         with self.assertRaises(NotebookLMError):
             import_plan(build_import_plan(self.root), browser)
         browser.open_calls.clear()
@@ -196,7 +186,7 @@ class NotebookLMTests(unittest.TestCase):
         source = self.file()
         plan = build_import_plan(self.root)
         source.write_bytes(b"Changed after planning")
-        browser = FakeBrowser()
+        browser = FakeAdapter()
         with self.assertRaises(NotebookLMError):
             import_plan(plan, browser)
         self.assertEqual(browser.calls, [])
@@ -221,58 +211,6 @@ class NotebookLMTests(unittest.TestCase):
         with patch.object(cli, "download_course"), patch.object(cli, "_cmd_notebooklm") as importer:
             self.assertEqual(cli._cmd_download_course("https://cool.ntu.edu.tw", args), 0)
             importer.assert_not_called()
-
-
-class BrowserReadinessTests(unittest.TestCase):
-    """A visible filename must not mark a still-processing source complete."""
-
-    def row(self, *, busy=False, icons=(), enabled=True):
-        from ntu_cool_materials.notebooklm_browser import TITLES
-        row = MagicMock()
-        title = "week1 - lecture [123456789abc].pdf"
-        row.inner_text.return_value = title
-        row.get_by_role.return_value.count.return_value = 1
-        row.get_by_role.return_value.first.is_enabled.return_value = enabled
-
-        def locator(selector):
-            result = MagicMock()
-            if selector == "mat-icon":
-                result.all_text_contents.return_value = list(icons)
-            elif selector == TITLES:
-                result.count.return_value = 1
-                result.inner_text.return_value = title
-            else:
-                result.count.return_value = int(busy)
-            return result
-
-        row.locator.side_effect = locator
-        return row
-
-    def test_progress_and_disabled_sources_not_ready(self):
-        from ntu_cool_materials.notebooklm_browser import NotebookLMBrowser
-        browser = NotebookLMBrowser(Path("unused"))
-        self.assertIsNone(browser._ready_title(self.row(busy=True)))
-        self.assertIsNone(browser._ready_title(self.row(enabled=False)))
-        self.assertIsNone(browser._ready_title(self.row(icons=["progress_activity"])))
-
-    def test_error_source_not_ready_even_if_checkbox_enabled(self):
-        from ntu_cool_materials.notebooklm_browser import NotebookLMBrowser
-        browser = NotebookLMBrowser(Path("unused"))
-        self.assertIsNone(browser._ready_title(self.row(icons=["error"])))
-
-    def test_ready_source_returns_exact_title(self):
-        from ntu_cool_materials.notebooklm_browser import NotebookLMBrowser
-        browser = NotebookLMBrowser(Path("unused"))
-        self.assertEqual(browser._ready_title(self.row()), "week1 - lecture [123456789abc].pdf")
-
-    def test_unknown_layout_not_treated_as_empty_notebook(self):
-        from ntu_cool_materials.notebooklm_browser import NotebookLMBrowser
-        browser = NotebookLMBrowser(Path("unused"))
-        browser.page = MagicMock()
-        browser.page.locator.return_value.count.return_value = 0
-        browser.page.get_by_text.return_value.count.return_value = 0
-        with self.assertRaises(NotebookLMError):
-            browser.source_count()
 
 
 if __name__ == "__main__":

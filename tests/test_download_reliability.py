@@ -179,7 +179,8 @@ class PipelineTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.output = contextlib.redirect_stdout(io.StringIO())
+        self.stdout = io.StringIO()
+        self.output = contextlib.redirect_stdout(self.stdout)
         self.output.__enter__()
         self.addCleanup(self.output.__exit__, None, None, None)
         self.client = Mock()
@@ -325,9 +326,11 @@ class PipelineTests(unittest.TestCase):
         self.client.check_auth.return_value = "ok"
         plan = self.plan([])
         plan.stats = p.CourseStats()
-        for flag, answer, imports, prompts in [
-            ([], "y", 1, 1), ([], "n", 0, 1),
-            (["--notebooklm"], "n", 1, 0), (["--no-notebooklm"], "y", 0, 0),
+        for flag, answer, imports, prompts, available in [
+            ([], "y", 1, 1, True), ([], "n", 0, 1, True),
+            (["--notebooklm"], "n", 1, 0, True), (["--no-notebooklm"], "y", 0, 0, True),
+            # Without notebooklm-py the question would only lead to a failure.
+            ([], "y", 0, 0, False),
         ]:
             args = cli._build_parser().parse_args([
                 "pick", "--headers-file", str(headers), "--out", str(self.root),
@@ -338,9 +341,12 @@ class PipelineTests(unittest.TestCase):
                  patch.object(cli, "download_course", return_value=plan), \
                  patch.object(cli.sys.stdin, "isatty", return_value=True), \
                  patch("ntu_cool_materials.notebooklm_flow.choose", return_value=answer) as choose, \
+                 patch("ntu_cool_materials.notebooklm_api.api_available", return_value=available), \
                  patch.object(cli, "_cmd_notebooklm", return_value=0) as do_import, \
                  patch("builtins.input", side_effect=["1", "q"]):
                 self.assertEqual(cli._cmd_pick(self.client.base_url, args), 0)
+            if not available:
+                self.assertEqual(self.stdout.getvalue().count("get-class-material[notebooklm]"), 1)
             self.assertEqual(choose.call_count, prompts)
             self.assertEqual(do_import.call_count, imports)
             if imports:
