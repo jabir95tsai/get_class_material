@@ -21,6 +21,8 @@ from typing import BinaryIO
 
 HOST_NAME = "tw.edu.ntu.cool_notebooklm"
 MAX_NATIVE_MESSAGE = 1024 * 1024
+# Fixed home location, not cli._secrets_dir(): the browser launches this host
+# from an unrelated working directory, and both sides must find the same file.
 SESSION_FILE = Path.home() / ".ntu-cool-gcm" / ".secrets" / "notebooklm_native_session.json"
 _GET_PATH = re.compile(r"^/(?:session|command|chunk/[A-Za-z0-9_-]{1,128}/\d{1,8})$")
 _POST_PATHS = {"/start", "/reply", "/stop"}

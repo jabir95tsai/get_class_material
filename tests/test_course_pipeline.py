@@ -232,7 +232,6 @@ class CourseFileHandlingTests(unittest.TestCase):
             with (
                 mock.patch.object(course_pipeline.shutil, "which", return_value="tool"),
                 mock.patch.object(course_pipeline.subprocess, "run", return_value=run_result) as run,
-                mock.patch.object(course_pipeline, "rename_downloaded_videos", return_value=[]),
             ):
                 course_pipeline.download_youtube(
                     plan,
@@ -274,7 +273,6 @@ class CourseFileHandlingTests(unittest.TestCase):
             with (
                 mock.patch.object(course_pipeline.shutil, "which", return_value="tool"),
                 mock.patch.object(course_pipeline.subprocess, "run", return_value=run_result) as run,
-                mock.patch.object(course_pipeline, "rename_downloaded_videos", return_value=[]),
             ):
                 course_pipeline.download_youtube(plan, cookies_path=cookies, yt_dlp="yt-dlp")
 

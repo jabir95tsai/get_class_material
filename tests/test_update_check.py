@@ -142,7 +142,7 @@ class YtDlpUpdateTests(unittest.TestCase):
         with mock.patch("ntu_cool_materials.update_check.get_yt_dlp_version", return_value="2026.08.19"):
             with mock.patch("ntu_cool_materials.update_check.update_yt_dlp") as mock_update:
                 updated = update_check.ensure_yt_dlp_updated("yt-dlp", max_age_days=60, now=now)
-                self.assertFalse(updated)
+                self.assertIsNone(updated)
                 mock_update.assert_not_called()
 
     def test_ensure_yt_dlp_updated_triggers_when_old(self) -> None:
@@ -151,9 +151,27 @@ class YtDlpUpdateTests(unittest.TestCase):
         now = datetime.date(2026, 9, 29)
         with mock.patch("ntu_cool_materials.update_check.get_yt_dlp_version", return_value="2026.04.10"):
             with mock.patch("ntu_cool_materials.update_check.update_yt_dlp", return_value=(True, "ok")) as mock_update:
-                updated = update_check.ensure_yt_dlp_updated("yt-dlp", max_age_days=60, now=now)
+                updated = update_check.ensure_yt_dlp_updated("yt-dlp", max_age_days=60, now=now,
+                                                             confirm=lambda _: True)
                 self.assertTrue(updated)
                 mock_update.assert_called_once_with("yt-dlp")
+
+    def test_ensure_yt_dlp_updated_needs_consent(self) -> None:
+        import datetime
+        from unittest import mock
+        now = datetime.date(2026, 9, 29)
+        with mock.patch("ntu_cool_materials.update_check.get_yt_dlp_version", return_value="2026.04.10"), \
+             mock.patch("ntu_cool_materials.update_check.update_yt_dlp") as mock_update, \
+             mock.patch("sys.stdin.isatty", return_value=False):
+            declined = update_check.ensure_yt_dlp_updated("yt-dlp", now=now, confirm=lambda _: False)
+            non_interactive = update_check.ensure_yt_dlp_updated("yt-dlp", now=now)
+        self.assertIs(declined, False)
+        self.assertIs(non_interactive, False)
+        mock_update.assert_not_called()
+
+    def test_confirm_defaults_to_yes_but_accepts_no(self) -> None:
+        self.assertTrue(update_check.confirm_yt_dlp_update("?", input_fn=lambda _: ""))
+        self.assertFalse(update_check.confirm_yt_dlp_update("?", input_fn=lambda _: "n"))
 
     def test_update_yt_dlp_pip_success(self) -> None:
         from unittest import mock

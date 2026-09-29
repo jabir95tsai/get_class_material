@@ -77,7 +77,7 @@ class StorageTests(unittest.TestCase):
             login.parent.mkdir()
             login.write_text("synthetic-secret")
             with patch("ntu_cool_materials.notebooklm_api.Path.home", return_value=root), \
-                 patch("ntu_cool_materials.notebooklm_api.Path.cwd", return_value=root / "elsewhere"):
+                 patch("ntu_cool_materials.cli._secrets_dir", return_value=root / "elsewhere/.secrets"):
                 remember_api_storage(login)
                 self.assertEqual(resolve_api_storage(), login)
                 config = root / ".ntu-cool-gcm/notebooklm-storage.json"
@@ -95,7 +95,7 @@ class StorageTests(unittest.TestCase):
             login = root / ".secrets/notebooklm-api/profiles/default/storage_state.json"
             login.parent.mkdir(parents=True)
             login.write_text("{}")
-            with patch("ntu_cool_materials.notebooklm_api.Path.cwd", return_value=root):
+            with patch("ntu_cool_materials.cli._secrets_dir", return_value=root / ".secrets"):
                 self.assertEqual(resolve_api_storage(), login)
                 explicit = root / "explicit.json"
                 self.assertEqual(resolve_api_storage(explicit), explicit)
@@ -107,7 +107,7 @@ class StorageTests(unittest.TestCase):
     def test_home_fallback_and_sdk_default(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True):
             root = Path(folder)
-            with patch("ntu_cool_materials.notebooklm_api.Path.cwd", return_value=root / "cwd"), \
+            with patch("ntu_cool_materials.cli._secrets_dir", return_value=root / ".ntu-cool-gcm/.secrets"), \
                  patch("ntu_cool_materials.notebooklm_api.Path.home", return_value=root):
                 self.assertIsNone(resolve_api_storage())
                 login = root / ".ntu-cool-gcm/.secrets/notebooklm-api/profiles/default/storage_state.json"

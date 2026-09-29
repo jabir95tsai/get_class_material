@@ -19,6 +19,12 @@ from .notebooklm import (
 )
 
 
+def _api_home() -> Path:
+    """The launchers' NOTEBOOKLM_HOME, under the shared secrets location."""
+    from .cli import _secrets_dir
+    return _secrets_dir().resolve() / "notebooklm-api"
+
+
 def trigger_interactive_login(storage_path: Path | None = None) -> bool:
     """Launch a browser window for Google NotebookLM login and wait for completion."""
     print("NotebookLM：Google 登入未就緒或已過期，正在開啟瀏覽器登入視窗...")
@@ -33,10 +39,7 @@ def trigger_interactive_login(storage_path: Path | None = None) -> bool:
     if storage_path:
         cmd.extend(["--storage", str(storage_path)])
     elif not any(name in env for name in ("NOTEBOOKLM_HOME", "NOTEBOOKLM_PROFILE", "NOTEBOOKLM_AUTH_JSON")):
-        secrets = Path.cwd() / ".secrets"
-        if not secrets.is_dir():
-            secrets = Path.home() / ".ntu-cool-gcm" / ".secrets"
-        env["NOTEBOOKLM_HOME"] = str(secrets / "notebooklm-api")
+        env["NOTEBOOKLM_HOME"] = str(_api_home())
 
     try:
         res = subprocess.run(cmd, env=env)
@@ -69,11 +72,7 @@ def resolve_api_storage(storage_path: Path | None = None) -> Path | None:
         "NOTEBOOKLM_HOME", "NOTEBOOKLM_PROFILE", "NOTEBOOKLM_AUTH_JSON",
     )):
         return None
-    secrets = Path.cwd() / ".secrets"
-    if not secrets.is_dir():
-        secrets = Path.home() / ".ntu-cool-gcm" / ".secrets"
-    # Match the launchers' NOTEBOOKLM_HOME.
-    candidate = secrets / "notebooklm-api" / "profiles" / "default" / "storage_state.json"
+    candidate = _api_home() / "profiles" / "default" / "storage_state.json"
     if candidate.is_file():
         return candidate
     config = Path.home() / ".ntu-cool-gcm" / "notebooklm-storage.json"

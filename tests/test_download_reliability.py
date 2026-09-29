@@ -379,6 +379,25 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(len(batches), 2)
             self.assertEqual(third.done, 2)
 
+    def test_youtube_cache_is_linked_or_removed_not_duplicated(self):
+        items = [{"type": "ExternalUrl", "title": "A", "external_url": "https://youtu.be/aaaaaaaaaaa"}]
+        def run(cmd, **kwargs):
+            (Path(cmd[cmd.index("-P") + 1]) / "aaaaaaaaaaa.mp4").write_bytes(b"synthetic mp4")
+        cache = self.root / ".media-cache/youtube/aaaaaaaaaaa.mp4"
+        with patch.object(p.shutil, "which", return_value="tool"), \
+             patch.object(p.subprocess, "run", side_effect=run), \
+             patch.object(p, "_valid_video", side_effect=lambda path: path.is_file()):
+            plan = self.plan(items)
+            self.assertEqual(p.download_youtube(plan, cookies_path=self.root / "none").done, 1)
+            self.assertTrue(cache.samefile(items[0]["_local_path"]))
+            # Without hard-link support the copy stays and the cache goes.
+            other = p.CoursePlan({"id": "1", "name": "Synthetic"}, "1", self.root / "fat",
+                                 [p.WeekPlan("week1", {"id": 10, "items": items}, self.root / "fat/week1")])
+            with patch.object(p.os, "link", side_effect=OSError("unsupported")):
+                self.assertEqual(p.download_youtube(other, cookies_path=self.root / "none").done, 1)
+            self.assertTrue(Path(items[0]["_local_path"]).is_file())
+            self.assertFalse((self.root / "fat/.media-cache/youtube/aaaaaaaaaaa.mp4").exists())
+
     def test_missing_ffmpeg_is_reported_as_failure(self):
         plan = self.plan([{"type": "ExternalUrl", "title": "A", "external_url": "https://youtu.be/aaaaaaaaaaa"}])
         with patch.object(p.shutil, "which", return_value=None):

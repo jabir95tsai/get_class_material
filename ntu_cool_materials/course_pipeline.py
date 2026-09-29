@@ -18,6 +18,7 @@ the transcoded.mp4 from the captured /api/.../view JSON's altSourceUri.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -27,7 +28,6 @@ import sys
 import time
 import urllib.error
 import urllib.parse
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,10 +36,10 @@ from typing import Any
 from .announcements import html_to_markdown, canvas_file_links, write_announcements
 from .canvas_client import CanvasAPIError, SessionExpiredError
 from .i18n import t
-from .media_naming import build_video_title_map, extract_youtube_ids, rename_downloaded_videos, sanitize_teacher_title
+from .media_naming import build_video_title_map, extract_youtube_ids, sanitize_teacher_title
 from .session_client import DROP_REQUEST_HEADER_NAMES, CanvasSessionClient
 from .storage import ManifestStore, atomic_write_text, course_directory_name
-from .http_io import DownloadError, download as download_http, origin, stream_response
+from .http_io import DownloadError, download as download_http, origin
 
 
 CANVAS_NETLOC = "cool.ntu.edu.tw"
@@ -253,10 +253,6 @@ def _session_headers(client: CanvasSessionClient) -> dict[str, str]:
     return h
 
 
-def _stream_with_progress(resp, target: Path, label: str, *, append=False, starting_from=0) -> None:
-    stream_response(resp, target, offset=starting_from if append else 0, progress=_progress(label))
-
-
 def _progress(label: str):
     last = [0.0]
     def update(received, total):
@@ -266,11 +262,6 @@ def _progress(label: str):
             size = f" / {total / 1048576:.1f} MB" if total is not None else " MB"
             print(f"\r  {label[:60]}: {received / 1048576:.1f}{size}    ", end="", flush=True)
     return update
-
-
-def _resume_offset_for(target: Path) -> int:
-    part = target.with_name(target.name + ".part")
-    return part.stat().st_size if part.is_file() else 0
 
 
 def _download_canvas_file(file_id: str, target: Path, headers: dict[str, str], *,
@@ -447,7 +438,6 @@ def save_pages(plan: CoursePlan, client: CanvasSessionClient, course_id: str) ->
                 page_url = f"{base_url}/courses/{course_id}/pages/{urllib.parse.quote(str(slug), safe='')}"
                 body = html_to_markdown(page.get("body"), base_url=page_url)
                 text = f"# {page.get('title') or title}\n\n{body}\n"
-                import hashlib
                 version = hashlib.sha256(text.encode()).hexdigest()
                 with _manifest(plan) as store:
                     key = _artifact_key(week, "page", slug)
@@ -467,29 +457,6 @@ def save_pages(plan: CoursePlan, client: CanvasSessionClient, course_id: str) ->
             except (CanvasAPIError, DownloadError, OSError, ValueError) as exc:
                 stats.failed.append(f"{week.label}/{item.get('title')}: {exc}")
     return stats
-
-
-_YTDLP_FORMAT_FRAGMENT_RE = re.compile(r"\.f\d+\.(mp4|m4a|webm|mkv)$", re.IGNORECASE)
-
-
-def _delete_orphan_format_fragments(videos_dir: Path) -> int:
-    """Remove yt-dlp format-tagged fragments (foo.f137.mp4, foo.f140.m4a) left
-    behind by an earlier run that couldn't merge them (usually because ffmpeg
-    was missing). These are useless on their own — the .f137 has no audio,
-    the .f140 has no picture — and our rename pass would otherwise promote
-    the .f137.mp4 to the human title, leaving the user with a silent video.
-    Returns how many were deleted."""
-    if not videos_dir.exists():
-        return 0
-    n = 0
-    for p in videos_dir.iterdir():
-        if p.is_file() and _YTDLP_FORMAT_FRAGMENT_RE.search(p.name):
-            try:
-                p.unlink()
-                n += 1
-            except OSError:
-                pass
-    return n
 
 
 def _count_youtube_urls_in_plan(plan: CoursePlan) -> int:
@@ -650,8 +617,31 @@ def download_youtube(
         if not jobs:
             return stats
         if shutil.which("ffmpeg") is None:
+            # Without ffmpeg yt-dlp leaves separate video/audio files it can't merge.
+            import platform
+            hint = {
+                "Windows": "winget install Gyan.FFmpeg",
+                "Darwin": "brew install ffmpeg",
+            }.get(platform.system(), "apt install ffmpeg  (or your distro's equivalent)")
+            print(t(
+                f"  ⚠ 找不到 ffmpeg,無法把 YouTube 的影片與聲音合併成可播放的 mp4。\n"
+                f"     請先安裝: {hint}\n"
+                f"     或執行 `ntu-cool-materials doctor --fix` 嘗試自動安裝。YouTube 階段先跳過。",
+                f"  ⚠ ffmpeg not found; YouTube video and audio can't be merged into a playable mp4.\n"
+                f"     Install it first: {hint}\n"
+                f"     Or run `ntu-cool-materials doctor --fix` to try auto-install. Skipping YouTube.",
+            ))
             stats.failed = [f"YouTube {vid}: ffmpeg is required" for vid in jobs]
             return stats
+        if shutil.which("node") is None:
+            # yt-dlp needs a JS runtime for YouTube's challenge; without it some
+            # videos fail or cap at 360p.
+            print(t(
+                "  ⚠ 找不到 Node.js。yt-dlp 在解 YouTube JS 挑戰時可能會失敗或畫質卡在 360p。\n"
+                "     建議裝 Node.js: winget install OpenJS.NodeJS / brew install node",
+                "  ⚠ Node.js not found. yt-dlp may fail YouTube's JS challenge or cap quality\n"
+                "     at 360p. Install: winget install OpenJS.NodeJS / brew install node",
+            ))
         cache.mkdir(parents=True, exist_ok=True)
         cache_paths = {vid: store.artifact_path(f"youtube-cache:{vid}", cache, f"{vid}.mp4") for vid in jobs}
         missing = [vid for vid in jobs if not store.artifact_current(
@@ -678,16 +668,27 @@ def download_youtube(
                 stats.failed.append(f"YouTube {vid}: no complete playable MP4")
                 continue
             store.record_artifact(f"youtube-cache:{vid}", source, vid)
+            copied, placed_all = False, True
             for key, target in destinations:
                 try:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     part = target.with_name(target.name + ".part")
-                    shutil.copyfile(source, part)
+                    part.unlink(missing_ok=True)
+                    try:
+                        # The cache shares the course volume: a hard link avoids a second copy.
+                        os.link(source, part)
+                    except OSError:
+                        shutil.copyfile(source, part)
+                        copied = True
                     part.replace(target)
                     store.record_artifact(key, target, vid)
                     stats.done += 1
                 except OSError as exc:
+                    placed_all = False
                     stats.failed.append(f"{target.name}: {exc}")
+            if copied and placed_all:
+                # No hard links here (e.g. exFAT): don't keep a duplicate in the cache.
+                source.unlink(missing_ok=True)
     return stats
 
 
@@ -1172,17 +1173,21 @@ def download_course(
             ))
         if not skip_youtube:
             print(t("\n[4/5] YouTube 影片", "\n[4/5] YouTube videos"))
-            yt_cookies_path = yt_cookies or Path(".secrets/youtube_cookies.txt")
+            if yt_cookies is None:
+                from .cli import _secrets_dir
+                yt_cookies = _secrets_dir() / "youtube_cookies.txt"
+            yt_cookies_path = yt_cookies
             has_youtube_jobs = any(
                 extract_youtube_ids(str(item.get("external_url") or item.get("url") or ""))
                 for week in plan.weeks
                 for item in week.items
             )
-            updated_already = False
+            # None = no update offered yet; True/False = already updated or declined.
+            yt_dlp_update = None
             if has_youtube_jobs:
                 from .update_check import ensure_yt_dlp_updated
                 try:
-                    updated_already = ensure_yt_dlp_updated(yt_dlp=yt_dlp, max_age_days=60)
+                    yt_dlp_update = ensure_yt_dlp_updated(yt_dlp=yt_dlp, max_age_days=60)
                 except Exception:
                     pass
 
@@ -1196,15 +1201,16 @@ def download_course(
                 plan, cookies_path=yt_cookies_path, yt_dlp=yt_dlp
             )
             failed_count = len(course_stats.youtube.failed)
-            if failed_count > 0 and has_youtube_jobs and not updated_already:
-                from .update_check import update_yt_dlp
-                print(t(
-                    "\n  偵測到 YouTube 影片下載失敗，嘗試自動更新 yt-dlp 並重試...",
-                    "\n  Detected YouTube download failure; attempting to update yt-dlp and retry...",
-                ))
-                ok, msg = update_yt_dlp(yt_dlp=yt_dlp)
+            if failed_count > 0 and has_youtube_jobs and yt_dlp_update is None:
+                from .update_check import confirm_yt_dlp_update, update_yt_dlp
+                ok = False
+                if confirm_yt_dlp_update(t(
+                    f"\n  有 {failed_count} 個 YouTube 影片下載失敗；更新 yt-dlp 後重試嗎？[Y/n]: ",
+                    f"\n  {failed_count} YouTube download(s) failed; update yt-dlp and retry? [Y/n]: ",
+                )):
+                    ok, msg = update_yt_dlp(yt_dlp=yt_dlp)
+                    print(f"  [yt-dlp] {msg}")
                 if ok:
-                    print(t(f"  [yt-dlp] {msg}", f"  [yt-dlp] {msg}"))
                     retry_stats = download_youtube(
                         plan, cookies_path=yt_cookies_path, yt_dlp=yt_dlp
                     )

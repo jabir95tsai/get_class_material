@@ -147,6 +147,7 @@ def update_yt_dlp(yt_dlp: str = "yt-dlp") -> tuple[bool, str]:
 
     Returns (success, message).
     """
+    from .i18n import t
     # 1. First try python -m pip install --upgrade yt-dlp
     try:
         proc = subprocess.run(
@@ -159,8 +160,8 @@ def update_yt_dlp(yt_dlp: str = "yt-dlp") -> tuple[bool, str]:
             # Invalidate importlib caches to reflect newly installed package version
             import importlib
             importlib.invalidate_caches()
-            new_ver = get_yt_dlp_version(yt_dlp) or "最新版"
-            return True, f"已透過 pip 升級至 {new_ver}"
+            new_ver = get_yt_dlp_version(yt_dlp) or t("最新版", "the latest version")
+            return True, t(f"已透過 pip 升級至 {new_ver}", f"updated to {new_ver} via pip")
     except Exception:
         pass
 
@@ -169,39 +170,55 @@ def update_yt_dlp(yt_dlp: str = "yt-dlp") -> tuple[bool, str]:
         try:
             proc = subprocess.run([yt_dlp, "-U"], capture_output=True, text=True, timeout=120)
             if proc.returncode == 0:
-                new_ver = get_yt_dlp_version(yt_dlp) or "最新版"
-                return True, f"已透過 yt-dlp -U 升級至 {new_ver}"
+                new_ver = get_yt_dlp_version(yt_dlp) or t("最新版", "the latest version")
+                return True, t(f"已透過 yt-dlp -U 升級至 {new_ver}", f"updated to {new_ver} via yt-dlp -U")
         except Exception:
             pass
 
-    return False, "更新失敗，請手動執行 pip install --upgrade yt-dlp"
+    return False, t("更新失敗，請手動執行 pip install --upgrade yt-dlp",
+                    "update failed; run pip install --upgrade yt-dlp manually")
+
+
+def confirm_yt_dlp_update(prompt: str, *, input_fn=None) -> bool:
+    """Ask before changing the user's Python environment; never in non-interactive runs."""
+    if input_fn is None:
+        if not sys.stdin.isatty():
+            return False
+        input_fn = input
+    try:
+        answer = input_fn(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer in {"", "y", "yes"}
 
 
 def ensure_yt_dlp_updated(
     yt_dlp: str = "yt-dlp",
     max_age_days: int = 60,
     now: datetime.date | None = None,
-) -> bool:
-    """Check if yt-dlp is older than max_age_days. If so, attempt to update it automatically.
+    *,
+    confirm=confirm_yt_dlp_update,
+) -> bool | None:
+    """Offer to update yt-dlp when it is older than max_age_days.
 
-    Returns True if an update was successfully performed, False otherwise.
+    Returns None when no update was needed (or the version is unknown), True
+    after a successful update, and False when the user declined or it failed.
     """
     version = get_yt_dlp_version(yt_dlp)
     if not version:
-        return False
+        return None
     age = yt_dlp_version_age_days(version, now=now)
     if age is None or age < max_age_days:
-        return False
+        return None
 
     from .i18n import t
-    print(t(
-        f"  [yt-dlp] 目前版本 ({version}) 已發布超過 {age} 天，正在自動更新至最新版...",
-        f"  [yt-dlp] current version ({version}) is {age} days old, updating automatically...",
-    ))
-    ok, msg = update_yt_dlp(yt_dlp)
-    if ok:
-        print(t(f"  [yt-dlp] {msg}", f"  [yt-dlp] {msg}"))
-        return True
-    else:
-        print(t(f"  [yt-dlp] {msg}", f"  [yt-dlp] {msg}"))
+    if not confirm(t(
+        f"  [yt-dlp] 目前版本 ({version}) 已發布 {age} 天，YouTube 下載可能失敗。現在更新嗎？[Y/n]: ",
+        f"  [yt-dlp] current version ({version}) is {age} days old; YouTube downloads may fail. Update now? [Y/n]: ",
+    )):
+        print(t("  [yt-dlp] 略過更新；可稍後執行 pip install --upgrade yt-dlp",
+                "  [yt-dlp] update skipped; run pip install --upgrade yt-dlp later"))
         return False
+    ok, msg = update_yt_dlp(yt_dlp)
+    print(f"  [yt-dlp] {msg}")
+    return ok
