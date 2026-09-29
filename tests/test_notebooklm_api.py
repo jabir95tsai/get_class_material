@@ -255,7 +255,7 @@ class APITests(unittest.TestCase):
                 raise RuntimeError("login expired")
             return self.api
 
-        with patch("sys.stdin.isatty", return_value=True), \
+        with patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), \
              patch("ntu_cool_materials.notebooklm_api.api_client_context", side_effect=failing_then_succeeding_context), \
              patch("ntu_cool_materials.notebooklm_api.trigger_interactive_login", return_value=True) as login_mock:
             adapter = NotebookLMAPIAdapter({s.title for s in self.plan.sources})
@@ -265,7 +265,7 @@ class APITests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
 
     def test_interactive_auto_login_failure_raises_notebooklm_error(self):
-        with patch("sys.stdin.isatty", return_value=True), \
+        with patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), \
              patch("ntu_cool_materials.notebooklm_api.api_client_context", side_effect=RuntimeError("no credentials")), \
              patch("ntu_cool_materials.notebooklm_api.trigger_interactive_login", return_value=False) as login_mock:
             adapter = NotebookLMAPIAdapter({s.title for s in self.plan.sources})

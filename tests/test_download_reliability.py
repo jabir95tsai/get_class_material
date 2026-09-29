@@ -278,7 +278,7 @@ class PipelineTests(unittest.TestCase):
     def test_session_recovery_reopens_browser_and_closes_it(self):
         browser = Mock()
         with patch.object(p, "plan_course", side_effect=[SessionExpiredError("expired"), self.plan([])]), \
-             patch.object(p.sys.stdin, "isatty", return_value=True), \
+             patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), \
              patch.object(p, "open_browser_session", return_value=browser) as opened, \
              patch.object(p, "_ensure_logged_in", return_value=True), \
              patch.object(p, "_dump_cookies_to_headers_file", return_value=True), \
@@ -339,7 +339,7 @@ class PipelineTests(unittest.TestCase):
                  patch.object(cli, "check_for_update", return_value=None), \
                  patch.object(cli, "CanvasSessionClient", return_value=self.client), \
                  patch.object(cli, "download_course", return_value=plan), \
-                 patch.object(cli.sys.stdin, "isatty", return_value=True), \
+                 patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), \
                  patch("ntu_cool_materials.notebooklm_flow.choose", return_value=answer) as choose, \
                  patch("ntu_cool_materials.notebooklm_api.api_available", return_value=available), \
                  patch.object(cli, "_cmd_notebooklm", return_value=0) as do_import, \

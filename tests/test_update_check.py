@@ -162,7 +162,7 @@ class YtDlpUpdateTests(unittest.TestCase):
         now = datetime.date(2026, 9, 29)
         with mock.patch("ntu_cool_materials.update_check.get_yt_dlp_version", return_value="2026.04.10"), \
              mock.patch("ntu_cool_materials.update_check.update_yt_dlp") as mock_update, \
-             mock.patch("sys.stdin.isatty", return_value=False):
+             mock.patch("ntu_cool_materials.console.stdin_is_interactive", return_value=False):
             declined = update_check.ensure_yt_dlp_updated("yt-dlp", now=now, confirm=lambda _: False)
             non_interactive = update_check.ensure_yt_dlp_updated("yt-dlp", now=now)
         self.assertIs(declined, False)

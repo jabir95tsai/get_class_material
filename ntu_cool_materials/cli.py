@@ -26,6 +26,7 @@ from .spinner import spinner
 from .storage import ManifestStore
 from .update_check import check_for_update
 from .sync import SyncStats, sync_course_materials
+from . import console
 
 
 DEFAULT_BASE_URL = "https://cool.ntu.edu.tw"
@@ -474,7 +475,7 @@ def _close_parent_terminal_on_quit() -> None:
     """
     if os.name != "nt":
         return
-    if not sys.stdin.isatty():
+    if not console.stdin_is_interactive():
         return
     try:
         wrapper_pid = os.getppid()
@@ -795,7 +796,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
 
     def _notebooklm_prompt_enabled() -> bool:
         nonlocal notebooklm_hint_shown
-        if getattr(args, "no_notebooklm", False) or not sys.stdin.isatty():
+        if getattr(args, "no_notebooklm", False) or not console.stdin_is_interactive():
             return False
         from .notebooklm_api import api_available, install_hint
         if api_available():
@@ -1231,7 +1232,7 @@ def _cmd_notebooklm(course_dir: Path | None, args: argparse.Namespace, *, guided
                 max_sources=args.notebooklm_max_sources, storage_path=storage,
             )
         is_interactive = (
-            sys.stdin.isatty()
+            console.stdin_is_interactive()
             and not getattr(args, "headless", False)
             and not getattr(args, "dry_run", False)
             and not getattr(args, "verify_only", False)

@@ -14,7 +14,7 @@ from ntu_cool_materials.notebooklm_flow import guided_import, select_course_fold
 
 class PublicFlowTests(unittest.TestCase):
     def test_guide_routes_directly_to_api_without_mode_prompt(self):
-        with patch("sys.stdin.isatty", return_value=True), \
+        with patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), \
              patch("builtins.input") as ask, \
              patch("ntu_cool_materials.notebooklm_api.run_api_import", return_value=0) as run:
             self.assertEqual(guided_import(self.root), 0)
@@ -37,7 +37,7 @@ class PublicFlowTests(unittest.TestCase):
                 cli.main(["notebooklm", "--course-dir", str(self.root), flag])
 
     def test_failed_import_keeps_materials_and_prints_retry_command(self):
-        with patch("sys.stdin.isatty", return_value=False), \
+        with patch("ntu_cool_materials.console.stdin_is_interactive", return_value=False), \
              patch("ntu_cool_materials.notebooklm_api.run_api_import", side_effect=NotebookLMError("API failed")):
             self.assertEqual(cli.main(["notebooklm", "--course-dir", str(self.root)]), 1)
         self.assertIn("API failed", self.output.getvalue())
@@ -51,7 +51,7 @@ class PublicFlowTests(unittest.TestCase):
         self.assertIn(sys.executable, str(caught.exception))
 
     def test_guide_passes_source_options_to_api(self):
-        with patch("sys.stdin.isatty", return_value=True), \
+        with patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), \
              patch("ntu_cool_materials.notebooklm_api.run_api_import", return_value=0) as run:
             guided_import(self.root, include_media=True, max_sources=17)
         self.assertTrue(run.call_args.kwargs["include_media"])
@@ -59,20 +59,20 @@ class PublicFlowTests(unittest.TestCase):
 
     def test_existing_notebook_url_passed_to_api(self):
         url = "https://notebooklm.google.com/notebook/example"
-        with patch("sys.stdin.isatty", return_value=True), \
+        with patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), \
              patch("ntu_cool_materials.notebooklm_api.run_api_import", return_value=0) as automatic:
             self.assertEqual(guided_import(self.root, notebook_url=url), 0)
         self.assertEqual(automatic.call_args.kwargs["notebook_url"], url)
 
     def test_api_failure_propagates_without_extra_prompt(self):
-        with patch("sys.stdin.isatty", return_value=True), patch("builtins.input") as ask, \
+        with patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), patch("builtins.input") as ask, \
              patch("ntu_cool_materials.notebooklm_api.run_api_import", side_effect=NotebookLMError("API failed")):
             with self.assertRaises(NotebookLMError):
                 guided_import(self.root)
         ask.assert_not_called()
 
     def test_noninteractive_no_folder_fails_without_prompt(self):
-        with patch("sys.stdin.isatty", return_value=False), patch("builtins.input") as ask:
+        with patch("ntu_cool_materials.console.stdin_is_interactive", return_value=False), patch("builtins.input") as ask:
             self.assertEqual(cli.main(["notebooklm"]), 1)
         ask.assert_not_called()
 
@@ -80,7 +80,7 @@ class PublicFlowTests(unittest.TestCase):
         (self.root / ".secrets").mkdir()
         course = self.root / "My course"
         course.mkdir()
-        with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="1"):
+        with patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), patch("builtins.input", return_value="1"):
             self.assertEqual(select_course_folder(self.root), course)
 
 

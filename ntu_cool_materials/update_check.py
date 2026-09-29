@@ -22,6 +22,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from . import console
+
 PYPI_JSON_URL = "https://pypi.org/pypi/get-class-material/json"
 _CHECK_INTERVAL_SEC = 24 * 3600
 _UNKNOWN_VERSION = "0.0.0+unknown"
@@ -182,7 +184,7 @@ def update_yt_dlp(yt_dlp: str = "yt-dlp") -> tuple[bool, str]:
 def confirm_yt_dlp_update(prompt: str, *, input_fn=None) -> bool:
     """Ask before changing the user's Python environment; never in non-interactive runs."""
     if input_fn is None:
-        if not sys.stdin.isatty():
+        if not console.stdin_is_interactive():
             return False
         input_fn = input
     try:

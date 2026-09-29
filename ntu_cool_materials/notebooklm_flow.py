@@ -1,9 +1,9 @@
 """Interactive course selection and guided NotebookLM API import."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+from . import console
 from .notebooklm import NotebookLMError, build_import_plan
 
 
@@ -21,7 +21,7 @@ def choose(prompt: str, choices: set[str], default: str) -> str:
 def guided_import(course_dir: Path, *, notebook_url: str | None = None,
                   include_media: bool = False, max_sources: int = 50,
                   storage_path: Path | None = None) -> int:
-    if not sys.stdin.isatty():
+    if not console.stdin_is_interactive():
         raise NotebookLMError("互動引導需要終端機。自動化請傳入 --course-dir 與明確參數；預覽可加 --dry-run。")
     plan = build_import_plan(course_dir, include_media=include_media)
     print(f"\nNotebookLM 匯入引導\n課程：{plan.root.name}\n"
@@ -48,7 +48,7 @@ def resolve_course_folder(output_root: Path, course_id: str) -> Path:
 
 def select_course_folder(output_root: Path) -> Path | None:
     """Only inspect the configured materials root; never scan the user's home."""
-    if not sys.stdin.isatty():
+    if not console.stdin_is_interactive():
         raise NotebookLMError("非互動模式請提供 --course-dir。")
     folders = sorted((p for p in output_root.iterdir() if p.is_dir() and not p.name.startswith(".")),
                      key=lambda p: p.name) if output_root.is_dir() else []

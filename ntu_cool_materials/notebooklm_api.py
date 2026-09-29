@@ -18,6 +18,7 @@ from .notebooklm import (
     ImportResult, NotebookLMError, build_import_plan, import_plan, validate_notebook_url,
     STATE_NAME, _read_state,
 )
+from . import console
 
 
 def api_available() -> bool:
@@ -153,7 +154,7 @@ class NotebookLMAPIAdapter:
             if isinstance(error, (KeyboardInterrupt, SystemExit, NotebookLMError)):
                 raise
             if (
-                sys.stdin.isatty()
+                console.stdin_is_interactive()
                 and self.context_factory is api_client_context
                 and not getattr(self, "_already_attempted_login", False)
             ):

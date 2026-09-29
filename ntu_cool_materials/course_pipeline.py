@@ -40,6 +40,7 @@ from .media_naming import build_video_title_map, extract_youtube_ids, sanitize_t
 from .session_client import DROP_REQUEST_HEADER_NAMES, CanvasSessionClient
 from .storage import ManifestStore, atomic_write_text, course_directory_name
 from .http_io import DownloadError, download as download_http, origin
+from . import console
 
 
 CANVAS_NETLOC = "cool.ntu.edu.tw"
@@ -567,7 +568,7 @@ def maybe_retry_youtube_with_login(
     if not interactive:
         return False
     if input_fn is None:
-        if not sys.stdin.isatty():
+        if not console.stdin_is_interactive():
             return False
         input_fn = input
 
@@ -1083,7 +1084,7 @@ def download_course(
             """Refresh SSO + cookies if we have a Playwright session. Returns True on success."""
             nonlocal client, browser, owns_browser
             if browser is None:
-                if not sys.stdin.isatty():
+                if not console.stdin_is_interactive():
                     return False
                 browser = open_browser_session(profile_dir=profile_dir, headless=headless,
                                                course_id=course_id, sso_timeout_sec=sso_timeout_sec)

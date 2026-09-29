@@ -135,7 +135,7 @@ class PickNotebookLMBatchTests(unittest.TestCase):
                 mock.patch.object(cli, "download_course", side_effect=fake_download_course), \
                 mock.patch.object(cli, "_cmd_notebooklm",
                                   side_effect=lambda d, *_a, **_k: imported.append(d) or 0), \
-                mock.patch.object(cli.sys, "stdin", mock.Mock(isatty=lambda: True)), \
+                mock.patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), \
                 mock.patch("builtins.input", side_effect=fake_input), \
                 contextlib.redirect_stdout(io.StringIO()):
             cli._cmd_pick("https://cool.ntu.edu.tw", args)
