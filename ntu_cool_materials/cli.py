@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from .http_io import DownloadError
 from .canvas_client import CanvasAPIError, CanvasClient
 from .announcements import announcement_markdown, write_announcements
 from .browser_session import refresh_headers_file
@@ -119,15 +120,24 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "pick":
             return _cmd_pick(base_url, args)
         if args.command == "notebooklm":
-            return _cmd_notebooklm(Path(args.course_dir) if args.course_dir else None, args)
+            if args.course_id:
+                from .notebooklm_flow import resolve_course_folder
+                try:
+                    folder = resolve_course_folder(_resolve_output_dir(args.out), args.course_id)
+                except RuntimeError as exc:
+                    print(str(exc))
+                    return 1
+            else:
+                folder = Path(args.course_dir) if args.course_dir else None
+            return _cmd_notebooklm(folder, args)
         if args.command == "doctor":
             return run_doctor(
                 headers_path=Path(args.headers_file),
                 youtube_cookies_path=Path(args.youtube_cookies),
                 fix=args.fix,
             )
-    except CanvasAPIError as exc:
-        print(f"Canvas API error: {exc}")
+    except (CanvasAPIError, DownloadError, OSError, ValueError) as exc:
+        print(f"Download error: {exc}")
         return 1
 
     parser.print_help()
@@ -252,9 +262,7 @@ def _build_parser() -> argparse.ArgumentParser:
     pick.add_argument("--skip-cool-videos", action="store_true")
     pick.add_argument(
         "--all-file-types", action="store_true",
-        help="Also download non-PDF files (.docx / .pptx / .xlsx / .zip / etc.). "
-             "Default skips them so a friend's .doc that breaks when force-renamed "
-             "to .pdf doesn't show up unsolicited.",
+        help="Compatibility flag: all Canvas files already keep their known original extensions.",
     )
     pick.add_argument(
         "--keep-terminal", action="store_true",
@@ -270,6 +278,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Download every PDF, Page, YouTube link and NTU CDN video for a course.",
     )
     course.add_argument("--course-id", required=True, help="Canvas course id (e.g. 60804).")
+    course.add_argument("--headless", action="store_true", help="Run any required video browser without a visible window; requires saved login.")
     course.add_argument("--out", default=None,
                         help="Output directory. Default: ~/Documents/ntu-cool-gcm_material "
                              "(or ./ntu-cool-gcm_material if you already have one there).")
@@ -301,16 +310,23 @@ def _build_parser() -> argparse.ArgumentParser:
     course.add_argument("--skip-cool-videos", action="store_true")
     course.add_argument(
         "--all-file-types", action="store_true",
-        help="Also download non-PDF files (.docx / .pptx / .xlsx / .zip / etc.).",
+        help="Compatibility flag: real file extensions are preserved by default.",
     )
 
     notebook = subparsers.add_parser("notebooklm", help="Import an existing course folder into personal NotebookLM.")
-    notebook.add_argument("--course-dir", help="One course folder; omit to open the interactive course picker.")
+    notebook_course = notebook.add_mutually_exclusive_group()
+    notebook_course.add_argument("--course-dir", help="One course folder; omit to open the interactive course picker.")
+    notebook_course.add_argument("--course-id", help="Import exactly one downloaded course by ID without any selection prompts.")
     notebook.add_argument("--out", default=None, help="Materials root to list in the interactive picker.")
     notebook_mode = notebook.add_mutually_exclusive_group()
     notebook_mode.add_argument("--dry-run", action="store_true", help="List candidates without opening a browser or uploading.")
     notebook_mode.add_argument("--guide", action="store_true", help="Interactive login, target and fallback guidance.")
     notebook_mode.add_argument("--manual", action="store_true", help="Prepare batch folders for manual upload; no Google login.")
+    notebook_mode.add_argument("--extension", action="store_true", help="Use the local Chrome/Edge extension with your normal Google login.")
+    notebook_mode.add_argument("--api", action="store_true", help="Use notebooklm-py API (default); requires a separate NotebookLM login.")
+    notebook_mode.add_argument("--verify-only", action="store_true", help="Read-only API check of remote sources and local journal; never upload or create notebooks.")
+    notebook_mode.add_argument("--browser", action="store_true", help="Use the legacy automated-browser adapter.")
+    notebook.add_argument("--extension-port", type=int, default=43821, help="Loopback extension bridge port (default: 43821).")
     for target in (pick, course, notebook):
         if target is not notebook:
             nlm_mode = target.add_mutually_exclusive_group()
@@ -320,6 +336,8 @@ def _build_parser() -> argparse.ArgumentParser:
                             help="Existing notebook URL; otherwise reuse the course mapping or create a notebook.")
         target.add_argument("--notebooklm-profile", default=str(secrets / "notebooklm_browser_profile"),
                             help="Separate persistent Google browser profile; never uses Canvas cookies.")
+        target.add_argument("--notebooklm-storage", default=None,
+                            help="API storage_state.json path; otherwise use NOTEBOOKLM_HOME / notebooklm profile settings.")
         target.add_argument("--notebooklm-include-media", action="store_true", help="Also import supported local audio/video files.")
         target.add_argument("--notebooklm-max-sources", type=int, default=50,
                             help="Total sources per notebook allowed by your plan (default: 50).")
@@ -338,6 +356,12 @@ def _build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--dry-run", action="store_true", help="Show what would be downloaded.")
     sync.add_argument("--no-modules", action="store_true", help="Skip modules.json snapshots.")
 
+    for download_parser in (pick, course):
+        download_parser.add_argument("--workers", type=int, choices=range(1, 5), default=3,
+                                     help="Maximum simultaneous file transfers (1-4, default 3).")
+        download_parser.add_argument("--verify-files", action="store_true",
+                                     help="Verify local SHA-256 checksums before skipping downloads.")
+    sync.add_argument("--verify-files", action="store_true", help="Verify local SHA-256 checksums.")
     return parser
 
 
@@ -382,6 +406,7 @@ def _cmd_sync(client: CanvasClient, args: argparse.Namespace) -> int:
                 store=store,
                 include_modules=not args.no_modules,
                 dry_run=args.dry_run,
+                verify_files=args.verify_files,
             )
             for course in selected_courses
         ]
@@ -586,6 +611,13 @@ def _secrets_dir() -> Path:
     return Path.home() / ".ntu-cool-gcm" / ".secrets"
 
 
+def _close_completed_login(browser: BrowserSession | None) -> None:
+    """Close the visible SSO browser once its cookies have been persisted."""
+    if browser is not None:
+        browser.close()
+    return None
+
+
 def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     """Interactive course picker → download_course.
 
@@ -748,14 +780,42 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
         ))
         return 0
 
-    def _run_download(course: dict[str, Any]) -> None:
+    # The visible browser is only needed to complete SSO and export the Canvas
+    # cookies. Normal course/file downloads use the saved headers, so close the
+    # NTU COOL window as soon as the course list proves that login succeeded.
+    # A course containing cool-video items can open the same persistent profile
+    # again later for the LTI capture step without asking the user to keep this
+    # login page around.
+    if browser is not None:
+        _close_completed_login(browser)
+        browser = None
+        print(t(
+            "NTU COOL 登入完成；登入頁面已關閉。",
+            "NTU COOL login complete; the login window has been closed.",
+        ))
+
+    def _import_notebooklm(course_dir: Path) -> None:
         nonlocal notebooklm_failed
+        if _cmd_notebooklm(course_dir, args, playwright=browser.pw if browser else None):
+            notebooklm_failed = True
+
+    def _notebooklm_prompt_enabled() -> bool:
+        return not getattr(args, "no_notebooklm", False) and sys.stdin.isatty()
+
+    def _run_download(course: dict[str, Any], *, offer_notebooklm: bool = True) -> bool:
+        """Download one course. Any course folder produced (even with some
+        failed items) is recorded in `course_dirs` so a batch can offer the
+        NotebookLM import once at the end instead of per course."""
+        nonlocal client
         course_id = str(course["id"])
+        course_dirs.pop(course_id, None)
         print(t(
             f"\n→ {course.get('name')!r} (課程 ID {course_id})\n",
             f"\n→ {course.get('name')!r} (course id {course_id})\n",
         ))
         try:
+            # A previous course may have refreshed the saved session internally.
+            client = CanvasSessionClient(base_url=base_url, headers=read_headers_file(headers_path))
             plan = download_course(
                 course_id=course_id,
                 output_dir=_resolve_output_dir(args.out),
@@ -773,27 +833,34 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                 skip_youtube=args.skip_youtube,
                 skip_cool_videos=args.skip_cool_videos,
                 all_file_types=args.all_file_types,
+                verify_files=args.verify_files, workers=args.workers,
             )
-            if getattr(args, "notebooklm", False):
-                if _cmd_notebooklm(plan.course_dir, args, playwright=browser.pw if browser else None):
-                    notebooklm_failed = True
-            elif not getattr(args, "no_notebooklm", False) and sys.stdin.isatty():
-                from .notebooklm_flow import choose
-                if choose("\n要將這門課匯入 NotebookLM 嗎？[y/N]：", {"y", "n"}, "n") == "y":
-                    if _cmd_notebooklm(plan.course_dir, args, guided=True, playwright=browser.pw if browser else None):
-                        notebooklm_failed = True
-        except RuntimeError as exc:
+            successful = getattr(plan, "stats", None) is None or plan.stats.successful
+            course_dirs[course_id] = plan.course_dir
+            # A few failed items (e.g. one unavailable YouTube video) must not
+            # hide the NotebookLM offer: the rest of the materials are on disk.
+            if offer_notebooklm:
+                if getattr(args, "notebooklm", False):
+                    _import_notebooklm(plan.course_dir)
+                elif _notebooklm_prompt_enabled():
+                    from .notebooklm_flow import choose
+                    if choose("\n要將這門課匯入 NotebookLM 嗎？[y/N]：", {"y", "n"}, "n") == "y":
+                        _import_notebooklm(plan.course_dir)
+            return successful
+        except (RuntimeError, OSError, ValueError) as exc:
             print(t(f"下載失敗: {exc}", f"download failed: {exc}"))
-            # Don't bail on the loop — let the user try another course.
+            return False
 
     notebooklm_failed = False
+    course_dirs: dict[str, Path] = {}
     n = len(courses)
     downloaded_in_session: set[str] = set()
+    failed_courses: set[str] = set()
 
     def _quit(_message: str = "") -> int:
         if not args.keep_terminal:
             _close_parent_terminal_on_quit()
-        return 1 if notebooklm_failed else 0
+        return 1 if notebooklm_failed or failed_courses else 0
 
     def _course_label(c: dict[str, Any]) -> str:
         return str(c.get("name") or c.get("course_code") or c.get("id"))
@@ -822,12 +889,59 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
             return False
         return ans in {"y", "yes"}
 
-    def _wrap_download(course: dict[str, Any], *, force: bool = False) -> None:
+    def _wrap_download(course: dict[str, Any], *, force: bool = False,
+                       offer_notebooklm: bool = True) -> bool:
+        """Returns False only when the user declined a re-download."""
         if not force and str(course.get("id")) in downloaded_in_session:
             if not _confirm_redownload(course):
+                return False
+        cid = str(course["id"])
+        if _run_download(course, offer_notebooklm=offer_notebooklm):
+            downloaded_in_session.add(cid)
+            failed_courses.discard(cid)
+        else:
+            failed_courses.add(cid)
+            downloaded_in_session.discard(cid)
+        return True
+
+    def _offer_notebooklm_batch(targets: list[dict[str, Any]]) -> None:
+        """After a multi-course batch, ask once which courses to import."""
+        ready = [c for c in targets if str(c["id"]) in course_dirs]
+        if not ready:
+            return
+        if getattr(args, "notebooklm", False):
+            for course in ready:
+                _import_notebooklm(course_dirs[str(course["id"])])
+            return
+        if not _notebooklm_prompt_enabled():
+            return
+        print(t("\n已下載的課程:\n", "\nDownloaded courses:\n"))
+        for i, course in enumerate(ready, 1):
+            print(f"  {i}) {_course_label(course)}")
+        while True:
+            try:
+                raw = input(t(
+                    f"\n要將哪些課程匯入 NotebookLM? (1-{len(ready)} 可空格多選, a = 全部, 直接 Enter = 不匯入)\n> ",
+                    f"\nImport which courses into NotebookLM? (1-{len(ready)} space-separated, a = all, Enter = none)\n> ",
+                )).strip().lower()
+            except (EOFError, KeyboardInterrupt):
                 return
-        _run_download(course)
-        downloaded_in_session.add(str(course.get("id")))
+            if raw in {"", "n", "no", "q"}:
+                return
+            if raw in {"a", "all", "y", "yes"}:
+                chosen = ready
+                break
+            indices = _parse_multi_indices(raw, len(ready))
+            if indices is not None:
+                chosen = [ready[i] for i in indices]
+                break
+            print(t(
+                f"無效輸入: {raw!r}。請輸入 1-{len(ready)}(可空格多選)、a、或直接 Enter。",
+                f"Invalid choice: {raw!r}. Enter 1-{len(ready)} (space-separated OK), a, or Enter.",
+            ))
+        for i, course in enumerate(chosen, 1):
+            print(f"\n=========== NotebookLM [{i}/{len(chosen)}] {_course_label(course)} ===========")
+            _import_notebooklm(course_dirs[str(course["id"])])
 
     class _UserQuit(Exception):
         """Raised when the user types 'q' from any prompt — propagates to the
@@ -991,9 +1105,12 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                 f"\n→ 開始依序下載全部 {len(targets)} 門課程...",
                 f"\n→ Downloading all {len(targets)} courses sequentially...",
             ))
+            ran: list[dict[str, Any]] = []
             for i, course in enumerate(targets, 1):
                 print(f"\n=========== [{i}/{len(targets)}] ===========")
-                _wrap_download(course)
+                if _wrap_download(course, offer_notebooklm=False):
+                    ran.append(course)
+            _offer_notebooklm_batch(ran)
         else:
             _wrap_download(targets[0])
 
@@ -1064,6 +1181,7 @@ def _cmd_download_course(base_url: str, args: argparse.Namespace) -> int:
             course_id=args.course_id,
             output_dir=_resolve_output_dir(args.out),
             base_url=base_url,
+            headless=getattr(args, "headless", False),
             headers_path=headers_path,
             refresh_session=args.refresh_session,
             yt_cookies=Path(args.youtube_cookies),
@@ -1075,7 +1193,10 @@ def _cmd_download_course(base_url: str, args: argparse.Namespace) -> int:
             skip_youtube=args.skip_youtube,
             skip_cool_videos=args.skip_cool_videos,
             all_file_types=args.all_file_types,
+            verify_files=args.verify_files, workers=args.workers,
         )
+        if getattr(plan, "stats", None) is not None and not plan.stats.successful:
+            return 1
         if getattr(args, "notebooklm", False):
             return _cmd_notebooklm(plan.course_dir, args)
         return 0
@@ -1093,17 +1214,44 @@ def _cmd_notebooklm(course_dir: Path | None, args: argparse.Namespace, *, guided
             if course_dir is None:
                 return 0
             # Explicit preview/manual modes are respected after folder selection.
-            guided = not (getattr(args, "dry_run", False) or getattr(args, "manual", False))
+            guided = not (getattr(args, "dry_run", False) or getattr(args, "manual", False) or getattr(args, "extension", False) or getattr(args, "browser", False) or getattr(args, "verify_only", False))
+        if getattr(args, "extension", False):
+            from .notebooklm_bridge import run_extension_import
+            port = args.extension_port
+            if not 1024 <= port <= 65535:
+                raise ValueError("Invalid extension port")
+            return run_extension_import(course_dir, secrets_dir=_secrets_dir(),
+                                        include_media=args.notebooklm_include_media,
+                                        max_sources=args.notebooklm_max_sources, port=port,
+                                        notebook_url=args.notebooklm_url)
         if guided or getattr(args, "guide", False):
             return guided_import(
                 course_dir, profile_dir=Path(args.notebooklm_profile),
                 notebook_url=args.notebooklm_url, include_media=args.notebooklm_include_media,
                 max_sources=args.notebooklm_max_sources,
                 playwright=playwright,
+                storage_path=Path(args.notebooklm_storage) if getattr(args, "notebooklm_storage", None) else None,
             )
         if getattr(args, "manual", False):
             prepare_manual_upload(course_dir, include_media=args.notebooklm_include_media,
                                   max_sources=args.notebooklm_max_sources)
+            return 0
+        if not getattr(args, "browser", False):
+            from .notebooklm_api import run_api_import
+            is_interactive = (
+                sys.stdin.isatty()
+                and not getattr(args, "headless", False)
+                and not getattr(args, "dry_run", False)
+                and not getattr(args, "verify_only", False)
+                and not getattr(args, "notebooklm_url", None)
+            )
+            run_api_import(course_dir, notebook_url=args.notebooklm_url,
+                           include_media=args.notebooklm_include_media,
+                           max_sources=args.notebooklm_max_sources,
+                           dry_run=getattr(args, "dry_run", False),
+                           verify_only=getattr(args, "verify_only", False),
+                           storage_path=Path(args.notebooklm_storage) if getattr(args, "notebooklm_storage", None) else None,
+                           interactive=is_interactive)
             return 0
         run_import(
             course_dir, profile_dir=Path(args.notebooklm_profile),

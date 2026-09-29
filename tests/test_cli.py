@@ -90,6 +90,77 @@ class SecretsDirTests(unittest.TestCase):
             self.assertTrue(args.youtube_cookies.startswith(base), args.youtube_cookies)
 
 
+class LoginBrowserLifetimeTests(unittest.TestCase):
+    def test_completed_login_closes_visible_browser(self) -> None:
+        browser = mock.MagicMock()
+        self.assertIsNone(cli._close_completed_login(browser))
+        browser.close.assert_called_once_with()
+
+    def test_no_login_browser_is_a_noop(self) -> None:
+        self.assertIsNone(cli._close_completed_login(None))
+
+
+class PickNotebookLMBatchTests(unittest.TestCase):
+    """Multi-course picks must ask about NotebookLM once, after every
+    download, and still offer courses that had a few failed items."""
+
+    COURSES = [{"id": 1, "name": "Alpha"}, {"id": 2, "name": "Beta"}, {"id": 3, "name": "Gamma"}]
+
+    def _run_pick(self, answers: list[str]) -> tuple[list[Path], list[str]]:
+        tmp = Path(tempfile.mkdtemp())
+        headers = tmp / "headers.txt"
+        headers.write_text("cookie: x\n", encoding="utf-8")
+        args = cli._build_parser().parse_args([
+            "pick", "--headers-file", str(headers), "--out", str(tmp / "out"), "--keep-terminal",
+        ])
+
+        def fake_download_course(*, course_id, **_kwargs):
+            stats = mock.Mock(successful=course_id != "1")  # Alpha has a failed item
+            return mock.Mock(course_dir=tmp / course_id, stats=stats)
+
+        client = mock.Mock()
+        client.check_auth.return_value = "ok"
+        client.list_courses.return_value = self.COURSES
+        imported: list[Path] = []
+        prompts: list[str] = []
+
+        def fake_input(prompt: str = "") -> str:
+            prompts.append(prompt)
+            return answers.pop(0)
+
+        with mock.patch.object(cli, "ensure_ready", return_value=True), \
+                mock.patch.object(cli, "check_for_update", return_value=None), \
+                mock.patch.object(cli, "CanvasSessionClient", return_value=client), \
+                mock.patch.object(cli, "read_headers_file", return_value={}), \
+                mock.patch.object(cli, "download_course", side_effect=fake_download_course), \
+                mock.patch.object(cli, "_cmd_notebooklm",
+                                  side_effect=lambda d, *_a, **_k: imported.append(d) or 0), \
+                mock.patch.object(cli.sys, "stdin", mock.Mock(isatty=lambda: True)), \
+                mock.patch("builtins.input", side_effect=fake_input), \
+                contextlib.redirect_stdout(io.StringIO()):
+            cli._cmd_pick("https://cool.ntu.edu.tw", args)
+        return imported, prompts
+
+    def test_batch_asks_once_after_all_downloads(self) -> None:
+        imported, prompts = self._run_pick(["1 2 3", "1 3", "q"])
+        tmp = imported[0].parent
+        self.assertEqual(imported, [tmp / "1", tmp / "3"])
+        notebook_prompts = [p for p in prompts if "NotebookLM" in p]
+        self.assertEqual(len(notebook_prompts), 1)
+
+    def test_batch_all_imports_every_course(self) -> None:
+        imported, _ = self._run_pick(["a", "a", "q"])
+        self.assertEqual([p.name for p in imported], ["1", "2", "3"])
+
+    def test_batch_enter_skips_import(self) -> None:
+        imported, _ = self._run_pick(["1 2", "", "q"])
+        self.assertEqual(imported, [])
+
+    def test_single_course_with_failed_item_is_still_offered(self) -> None:
+        imported, _ = self._run_pick(["1", "y", "q"])
+        self.assertEqual([p.name for p in imported], ["1"])
+
+
 class ForceUtf8StreamsTests(unittest.TestCase):
     def test_reconfigures_stdout_and_stderr_to_utf8(self) -> None:
         # TextIOWrapper exposes reconfigure() the same way real sys.stdout does.
