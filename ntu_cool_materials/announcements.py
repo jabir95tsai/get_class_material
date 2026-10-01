@@ -8,7 +8,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from .storage import atomic_write_text, course_directory_name
+from .storage import atomic_write_text, course_directory_name, hide_file
 
 
 class MarkdownExtractor(HTMLParser):
@@ -134,6 +134,24 @@ def announcement_markdown(announcement: dict[str, Any]) -> str:
     return "\n".join(parts).strip()
 
 
+# Raw API data is bookkeeping (the .md is what people read), so it's a hidden dotfile.
+ANNOUNCEMENTS_JSON = ".announcements.json"
+LEGACY_ANNOUNCEMENTS_JSON = "announcements.json"
+
+
+def migrate_legacy_announcements_json(target_dir: Path) -> None:
+    """Rename a visible announcements.json from older versions to the hidden name."""
+    legacy = target_dir / LEGACY_ANNOUNCEMENTS_JSON
+    current = target_dir / ANNOUNCEMENTS_JSON
+    if not legacy.is_file():
+        return
+    if current.is_file():
+        legacy.unlink()
+    else:
+        legacy.replace(current)
+        hide_file(current)
+
+
 def write_announcements(
     output_dir: Path,
     course: dict[str, Any],
@@ -142,9 +160,10 @@ def write_announcements(
     target_dir = output_dir / course_directory_name(course) / "announcements"
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    json_path = target_dir / "announcements.json"
+    json_path = target_dir / ANNOUNCEMENTS_JSON
     markdown_path = target_dir / "announcements.md"
     atomic_write_text(json_path, json.dumps(announcements, ensure_ascii=False, indent=2))
+    (target_dir / LEGACY_ANNOUNCEMENTS_JSON).unlink(missing_ok=True)
     atomic_write_text(markdown_path,
         "\n\n".join(announcement_markdown(item) for item in announcements),
     )

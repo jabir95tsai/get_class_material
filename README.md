@@ -372,7 +372,7 @@ ntu-cool-gcm --refresh-session
 ntu-cool-gcm --skip-youtube --skip-cool-videos
 ```
 
-下載課程時預設一併抓取所有可見公告（標題、作者、日期與全文），存放於課程資料夾的 `announcements/announcements.md` 與 `announcements/announcements.json`。每次執行會重新抓取，以更新老師修改過的公告；課程總覽亦提供公告連結。可用 `--skip-announcements` 略過。
+下載課程時預設一併抓取所有可見公告（標題、作者、日期與全文），存放於課程資料夾的 `announcements/announcements.md` 與 `announcements/.announcements.json`（隱藏檔）。每次執行會重新抓取，以更新老師修改過的公告；課程總覽亦提供公告連結。可用 `--skip-announcements` 略過。
 
 可以混搭:`--skip-announcements`、`--skip-pdfs`、`--skip-pages`、`--skip-youtube`、`--skip-cool-videos`。
 
@@ -399,7 +399,7 @@ ntu-cool-gcm --out D:\我的課程
 - YouTube 依 video ID 補抓缺少的影片，並利用課程內的 `.media-cache/` 避免同一影片跨週重抓。快取與週次資料夾的影片是硬連結，不會多占磁碟空間；不支援硬連結的磁碟（例如 exFAT 隨身碟）則改為複製，完成後刪除快取。
 - 需要下載 YouTube 且 yt-dlp 已超過 60 天未更新，或影片下載失敗時，會先詢問是否用 pip 更新 yt-dlp（預設是）；非互動執行不會自動更新。
 - Pages／公告保留連結與圖片網址，並抓取其中可識別、同一 Canvas 網站的檔案附件。外部網站只保留連結，不會遞迴下載整個網站。
-- 每次正常完成流程會寫入 `download_report.json`。部分失敗會回傳退出碼 1；互動選單只將成功的課程標記完成。非互動執行遇到登入過期會失敗退出，可加 `--refresh-session` 重新登入。
+- 每次正常完成流程會寫入 `.download_report.json`（與 `.ntu_cool_materials.sqlite3`、`.notebooklm-import.json` 等紀錄檔在 Windows 上會自動設為隱藏檔）。部分失敗會回傳退出碼 1；互動選單只將成功的課程標記完成。非互動執行遇到登入過期會失敗退出，可加 `--refresh-session` 重新登入。
 
 ```powershell
 # 額外檢查本機內容雜湊 / Verify local SHA-256 before skipping

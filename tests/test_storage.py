@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
 
-from ntu_cool_materials.storage import ManifestStore, sanitize_component, sha256_file
+from ntu_cool_materials.storage import ManifestStore, atomic_write_text, sanitize_component, sha256_file
 
 
 class StorageTests(unittest.TestCase):
@@ -43,6 +45,32 @@ class StorageTests(unittest.TestCase):
                 self.assertTrue(store.needs_download(changed, target))
             finally:
                 store.close()
+
+
+@unittest.skipUnless(os.name == "nt", "hidden attribute is Windows-only")
+class HiddenFileTests(unittest.TestCase):
+    def assert_hidden(self, path: Path, hidden: bool = True) -> None:
+        self.assertEqual(bool(path.stat().st_file_attributes & stat.FILE_ATTRIBUTE_HIDDEN), hidden)
+
+    def test_dot_files_stay_hidden_across_rewrites(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / ".state.json"
+            atomic_write_text(state, "1")
+            self.assert_hidden(state)
+            atomic_write_text(state, "2")  # replacing must not leave it visible
+            self.assertEqual(state.read_text(encoding="utf-8"), "2")
+            self.assert_hidden(state)
+
+            visible = Path(tmp) / "notes.md"
+            atomic_write_text(visible, "x")
+            self.assert_hidden(visible, hidden=False)
+
+    def test_manifest_database_is_hidden_and_reopenable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / ".manifest.sqlite3"
+            ManifestStore(db).close()
+            self.assert_hidden(db)
+            ManifestStore(db).close()
 
 
 if __name__ == "__main__":

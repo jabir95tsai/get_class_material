@@ -271,7 +271,7 @@ class PipelineTests(unittest.TestCase):
         with patch.object(p, "plan_course", return_value=self.plan([])), \
              patch.object(p, "download_files", return_value=p.StageStats(failed=["synthetic failure"])):
             self.assertEqual(cli._cmd_download_course(self.client.base_url, args), 1)
-        report = json.loads((self.root / "download_report.json").read_text())
+        report = json.loads((self.root / ".download_report.json").read_text())
         self.assertFalse(report["successful"])
         self.assertTrue(report["stages"]["pages"]["disabled"])
 

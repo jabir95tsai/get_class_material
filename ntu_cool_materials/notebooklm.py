@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
 
-from .storage import sanitize_component, sha256_file
+from .storage import hide_file, sanitize_component, sha256_file
 
 DOCUMENT_TYPES = {".pdf", ".txt", ".md", ".docx", ".pptx", ".csv", ".epub"}
 MEDIA_TYPES = {".mp3", ".wav", ".m4a", ".mp4", ".aac", ".ogg", ".opus"}
@@ -164,6 +164,7 @@ def _save_state(path: Path, state: dict) -> None:
         os.replace(tmp, path)
     finally:
         Path(tmp).unlink(missing_ok=True)
+    hide_file(path)
 
 
 @contextmanager

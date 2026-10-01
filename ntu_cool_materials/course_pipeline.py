@@ -33,7 +33,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .announcements import html_to_markdown, canvas_file_links, write_announcements
+from .announcements import (
+    ANNOUNCEMENTS_JSON, canvas_file_links, html_to_markdown, migrate_legacy_announcements_json, write_announcements,
+)
 from .canvas_client import CanvasAPIError, SessionExpiredError
 from .i18n import t
 from .media_naming import build_video_title_map, extract_youtube_ids, sanitize_teacher_title
@@ -111,7 +113,8 @@ def save_announcements(plan: CoursePlan, client: CanvasSessionClient) -> StageSt
     try:
         announcements = client.list_course_announcements(plan.course_id)
         target_dir = plan.course_dir / "announcements"
-        json_path = target_dir / "announcements.json"
+        migrate_legacy_announcements_json(target_dir)
+        json_path = target_dir / ANNOUNCEMENTS_JSON
         markdown_path = target_dir / "announcements.md"
 
         existing_posts = {}
@@ -1305,10 +1308,12 @@ def download_course(
             f"\n檔案存放位置:\n  {plan.course_dir.resolve()}",
             f"\nFiles saved to:\n  {plan.course_dir.resolve()}",
         ))
-        atomic_write_text(plan.course_dir / "download_report.json", json.dumps(
+        atomic_write_text(plan.course_dir / ".download_report.json", json.dumps(
             {"successful": course_stats.successful, "stages": {
                 name: {"done": stage.done, "skipped": stage.skipped, "failed": stage.failed, "disabled": stage.disabled}
                 for name, stage in vars(course_stats).items()}}, ensure_ascii=False, indent=2))
+        # Older versions wrote a visible report; the hidden one above replaces it.
+        (plan.course_dir / "download_report.json").unlink(missing_ok=True)
         return plan
     finally:
         if owns_browser and browser is not None:

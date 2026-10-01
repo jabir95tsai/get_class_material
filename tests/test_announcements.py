@@ -54,7 +54,7 @@ class AnnouncementPipelineTests(unittest.TestCase):
                 pipeline.download_course(**kwargs)
                 target = plan.course_dir / "announcements"
                 self.assertIn("完整公告內容", (target / "announcements.md").read_text(encoding="utf-8"))
-                self.assertEqual(json.loads((target / "announcements.json").read_text(encoding="utf-8")), client.list_course_announcements.return_value)
+                self.assertEqual(json.loads((target / ".announcements.json").read_text(encoding="utf-8")), client.list_course_announcements.return_value)
                 self.assertIn("announcements/announcements.md", (plan.course_dir / "course_overview.md").read_text(encoding="utf-8"))
                 client.list_course_announcements.return_value[0]["message"] = "<p>Updated</p>"
                 pipeline.download_course(**kwargs)
@@ -84,10 +84,26 @@ class AnnouncementPipelineTests(unittest.TestCase):
             client = mock.Mock()
             client.list_course_announcements.return_value = []
             self.assertEqual(pipeline.save_announcements(plan, client).done, 0)
-            self.assertEqual(json.loads((plan.course_dir / "announcements/announcements.json").read_text()), [])
+            self.assertEqual(json.loads((plan.course_dir / "announcements/.announcements.json").read_text()), [])
         for args in [["pick"], ["download-course", "--course-id", "123"]]:
             self.assertFalse(_build_parser().parse_args(args).skip_announcements)
             self.assertTrue(_build_parser().parse_args(args + ["--skip-announcements"]).skip_announcements)
+
+    def test_legacy_visible_json_is_migrated_without_rewriting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            course = {"id": 123, "name": "Test"}
+            plan = pipeline.CoursePlan(course, "123", Path(tmp) / course_directory_name(course))
+            target = plan.course_dir / "announcements"
+            target.mkdir(parents=True)
+            posts = [{"id": 1, "title": "T", "message": "M", "updated_at": "2026-01-01"}]
+            (target / "announcements.json").write_text(json.dumps(posts), encoding="utf-8")
+            (target / "announcements.md").write_text("saved", encoding="utf-8")
+            client = mock.Mock()
+            client.list_course_announcements.return_value = posts
+            stats = pipeline.save_announcements(plan, client)
+            self.assertEqual((stats.done, stats.skipped), (0, 1))  # legacy data still counts as existing
+            self.assertFalse((target / "announcements.json").exists())
+            self.assertEqual(json.loads((target / ".announcements.json").read_text(encoding="utf-8")), posts)
 
     def test_announcements_skip_unchanged_on_subsequent_runs(self):
         with tempfile.TemporaryDirectory() as tmp:
