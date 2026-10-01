@@ -5,6 +5,7 @@ from pathlib import Path
 
 from . import console
 from .notebooklm import NotebookLMError, build_import_plan
+from .spreadsheet_convert import convert_spreadsheets
 
 
 def choose(prompt: str, choices: set[str], default: str) -> str:
@@ -23,6 +24,7 @@ def guided_import(course_dir: Path, *, notebook_url: str | None = None,
                   storage_path: Path | None = None) -> int:
     if not console.stdin_is_interactive():
         raise NotebookLMError("互動引導需要終端機。自動化請傳入 --course-dir 與明確參數；預覽可加 --dry-run。")
+    convert_spreadsheets(course_dir)  # so the source count below includes converted workbooks
     plan = build_import_plan(course_dir, include_media=include_media)
     print(f"\nNotebookLM 匯入引導\n課程：{plan.root.name}\n"
           f"可用來源：{len(plan.sources)}，略過：{len(plan.skipped)}")

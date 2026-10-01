@@ -94,6 +94,14 @@ ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --no
 
 - 預設匯入 PDF、TXT、Markdown、DOCX、PPTX、CSV、EPUB；略過 JSON、metadata、
   隱藏資料夾、目錄摘要、空檔案、連結檔案與超過 200 MB 的檔案。
+- NotebookLM 不支援 Excel：下載完成與匯入前，會用 [markitdown](https://github.com/microsoft/markitdown)
+  把每個 `.xlsx`／`.xls` 轉成旁邊的 `<檔名>.xlsx.md`（每個工作表一個表格），匯入的是這份 Markdown。
+  原始 Excel 不會被修改；公式只保留計算結果，圖表與圖片會遺失。`[notebooklm]` 已內含轉換工具，
+  只想轉檔可單獨安裝：
+
+  ```powershell
+  python -m pip install "get-class-material[excel]"
+  ```
 - 使用 `--notebooklm-include-media` 可加入 MP3、WAV、M4A、MP4、AAC、OGG、OPUS。
   影音依 NotebookLM 的音訊來源處理，**不保證理解影片畫面**；此版本不轉碼、不切割超大檔案，
   也不直接匯入 YouTube URL。

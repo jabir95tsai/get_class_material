@@ -40,6 +40,7 @@ from .canvas_client import CanvasAPIError, SessionExpiredError
 from .i18n import t
 from .media_naming import build_video_title_map, extract_youtube_ids, sanitize_teacher_title
 from .session_client import DROP_REQUEST_HEADER_NAMES, CanvasSessionClient
+from .spreadsheet_convert import convert_spreadsheets
 from .storage import ManifestStore, atomic_write_text, course_directory_name
 from .http_io import DownloadError, download as download_http, origin
 from . import console
@@ -1175,6 +1176,12 @@ def download_course(
                 f"  儲存 {course_stats.pages.done}、跳過 {course_stats.pages.skipped}、失敗 {len(course_stats.pages.failed)}",
                 f"  saved {course_stats.pages.done}, skipped {course_stats.pages.skipped}, failed {len(course_stats.pages.failed)}",
             ))
+        if not (skip_pdfs and skip_pages):
+            # Files and Page attachments can both bring in Excel workbooks.
+            excel = convert_spreadsheets(plan.course_dir)
+            if excel.done or excel.failed:
+                print(t(f"  Excel → Markdown: 轉換 {excel.done}、失敗 {len(excel.failed)}",
+                        f"  Excel → Markdown: {excel.done} converted, {len(excel.failed)} failed"))
         if not skip_youtube:
             print(t("\n[4/5] YouTube 影片", "\n[4/5] YouTube videos"))
             if yt_cookies is None:

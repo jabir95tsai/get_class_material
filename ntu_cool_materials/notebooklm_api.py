@@ -19,6 +19,7 @@ from .notebooklm import (
     STATE_NAME, _read_state,
 )
 from . import console
+from .spreadsheet_convert import convert_spreadsheets
 
 
 def api_available() -> bool:
@@ -312,6 +313,9 @@ def run_api_import(course_dir: Path, *, notebook_url: str | None = None,
         raise NotebookLMError("來源上限必須大於零。")
     if notebook_url:
         notebook_url = validate_notebook_url(notebook_url)
+    if not dry_run:
+        # Folders downloaded before Excel conversion existed still get their Markdown.
+        convert_spreadsheets(course_dir)
     plan = build_import_plan(course_dir, include_media=include_media)
     print(f"NotebookLM API：{len(plan.sources)} 個候選來源；{len(plan.skipped)} 個略過。")
     for relative, reason in plan.skipped:
