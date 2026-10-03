@@ -60,6 +60,7 @@ Start-NotebookLM.cmd --course-id 60804 --verify-only
 已有教材的使用者只要執行 `ntu-cool-materials notebooklm`，就能從預設下載目錄選課，
 也可輸入其他資料夾路徑。每位使用者使用自己的帳號與本機設定檔，不需要維護者的 Google 帳號、API key 或 Codex。
 `--no-notebooklm` 可略過下載後的詢問；管線／非互動模式不會自動詢問。
+匯入訊息預設是中文，`notebooklm`、`download-course`、`ntu-cool-gcm` 都可加 `--lang en` 改成英文。
 
 ```powershell
 # 開啟既有教材匯入引導 / Guided course picker
@@ -136,7 +137,9 @@ pip install --upgrade get-class-material
 ```
 
 > 就是安裝指令多加 `--upgrade`。建議偶爾跑一次拿最新修正。
-> (0.2.18 以後的版本啟動時會自動提醒你有沒有新版;但如果你現在是更舊的版本,看不到提醒是正常的 —— 跑上面那行更新一次就會開始有提醒了。)
+> (工具啟動時會自動提醒你有沒有新版;如果你還在 0.2.18 以前的舊版,看不到提醒是正常的 —— 跑上面那行更新一次就會開始有提醒了。)
+>
+> **從 0.2.x 升到 1.0 要注意:** 舊的 `--all-file-types`、`--notebooklm-include-media`、`notebooklm --api` 已移除(它們本來就沒有作用),指令裡有的話刪掉即可。完整變更見 [Releases](https://github.com/jabir95tsai/get_class_material/releases)。
 
 ---
 
@@ -147,11 +150,11 @@ pip install --upgrade get-class-material
 這個工具會自動:
 
 1. 用你自己的台大帳號登入 NTU COOL(只在瀏覽器登入頁輸入密碼,程式不會看到)
-2. 把你選的課程整門搬下來:**PDF 講義、Page 文字內容、YouTube 連結影片、NTU 上課錄影**
+2. 把你選的課程整門搬下來:**講義與附件(PDF、PPT、Word、Excel…)、Page 文字內容、課程公告、YouTube 連結影片、NTU 上課錄影**
 
 之後你可以:
 - 直接拖 PDF 到 ChatGPT / Gemini 問問題
-- 把 `.md` 文字貼進 NotebookLM 做筆記
+- 一鍵匯入個人版 NotebookLM(見上方「自動匯入個人版 NotebookLM」),或把 `.md` 手動丟進去做筆記
 
 ## 誰適合用
 
@@ -237,7 +240,7 @@ ffmpeg 和 Node.js 只有下載 YouTube 影片才需要,所以工具會先問你
 > - 不要把密碼貼在 PowerShell、聊天室、或任何其他地方
 
 登入完成並成功讀取課程清單後，工具會自動關閉 NTU COOL 瀏覽器視窗；你不需要保留登入頁面。
-若選到含 NTU cool-video 的課程，程式可能會用同一個登入設定檔短暫重新開啟瀏覽器來取得影片資訊。
+若選到含 NTU cool-video 的課程，程式會在背景(看不到視窗)沿用剛才的登入取得影片資訊；只有登入已過期時才會再跳出登入視窗。
 
 ### 第 6 步 — 選課
 
@@ -287,10 +290,11 @@ ffmpeg 和 Node.js 只有下載 YouTube 影片才需要,所以工具會先問你
 
 ```text
 完成。
-  PDF:        新增 6、跳過 0、失敗 0
-  Page:       新增 3、跳過 0、失敗 0
-  YouTube:    新增 7、跳過 0、失敗 0
-  上課影片:   新增 4、跳過 0、失敗 0
+  公告:        新增 5、跳過 0、失敗 0
+  檔案:        新增 6、跳過 0、失敗 0
+  Page:        新增 3、跳過 0、失敗 0
+  YouTube:     新增 7、跳過 0、失敗 0
+  上課影片:    新增 4、跳過 0、失敗 0
 
 檔案存放位置:
   C:\Users\你\Documents\ntu-cool-gcm_material\音樂、演化與大腦 Music, Evolution and the Brain (57544)
@@ -305,7 +309,7 @@ ffmpeg 和 Node.js 只有下載 YouTube 影片才需要,所以工具會先問你
 > 
 ```
 
-要再下載另一門就 `c`,要結束就 `q`(會自動關閉 PowerShell 視窗)。
+要再下載另一門就 `c`,要結束就 `q`(會自動關閉 PowerShell 視窗;不想關可以在啟動時加 `--keep-terminal`)。
 
 ---
 
@@ -317,20 +321,28 @@ ffmpeg 和 Node.js 只有下載 YouTube 影片才需要,所以工具會先問你
 C:\Users\你\Documents\ntu-cool-gcm_material\
 └── 音樂、演化與大腦 Music, Evolution and the Brain (57544)\
     ├── course_overview.md        ← 這份課程的目錄索引(可以餵給 AI)
+    ├── announcements\
+    │   └── announcements.md      ← 所有課程公告
     ├── week1\
     │   ├── SYLBS_班次1.pdf
+    │   ├── 成績計算.xlsx
+    │   ├── 成績計算.xlsx.md      ← Excel 轉成的 Markdown(NotebookLM 用)
     │   └── 1-1 生物音樂學簡介.mp4
     ├── week2\
     │   ├── 2-1-1 伊甸園外的生命長河.pdf
-    │   └── 2-3-2 緊拉慢唱的妙用.md
+    │   ├── 2-3-2 緊拉慢唱的妙用.md
+    │   └── attachments\          ← Page 裡連到的 Canvas 檔案
     └── week3\
         └── ...
 ```
 
-- **`.pdf`** — 老師上傳的講義,原始檔
+- **`.pdf` / `.pptx` / `.docx` / `.xlsx` …** — 老師上傳的原始檔,保留原本的副檔名
 - **`.md`** — Page 文字內容(VS Code、Typora、Obsidian 都能讀)
 - **`.mp4`** — YouTube 影片 + NTU 上課錄影,都用人看得懂的中文標題
+- **`announcements/announcements.md`** — 課程公告全文,每次執行都會更新
 - **`course_overview.md`** — 整門課的目錄索引,列出每週有什麼、檔案放在哪。**直接拖到 AI 就可以叫它幫你做學習計畫**
+
+資料夾裡以 `.` 開頭的檔案(`.ntu_cool_materials.sqlite3`、`.media-cache` 等)是工具的紀錄,在 Windows 上會自動隱藏,不要刪除。
 
 ---
 
@@ -454,7 +466,7 @@ ntu-cool-gcm --version
 工具每次啟動時也會**自動檢查有沒有新版**(一天最多查一次,離線就跳過,不會拖慢速度)。如果有新版會提醒你:
 
 ```text
-💡 有新版本 0.2.18(你目前 0.2.17)。更新指令: pip install --upgrade get-class-material
+💡 有新版本 1.0.1(你目前 1.0.0)。更新指令: pip install --upgrade get-class-material
 ```
 
 照著跑那行 `pip install --upgrade get-class-material` 就更新好了。
@@ -479,6 +491,8 @@ ntu-cool-gcm --version
 > ⚠ 如果你用 **Chrome / Edge**,重試前請**先完全關掉那個瀏覽器**——瀏覽器開著的時候 cookie 檔會被鎖住,讀不到。Firefox 通常不用關。
 >
 > 前提是你平常那個瀏覽器**有登入會看到這些影片的 Google 帳號**(通常就是你的台大 Google 或個人帳號)。
+
+有些 NTU 上課影片(cool-video)其實是包著 YouTube 影片;如果它是私人影片,也會用同樣的方式重試。前面已經回答過 `y` 的話不會再問一次。
 
 ---
 
@@ -539,7 +553,7 @@ ntu-cool-gcm --refresh-session
 最常見原因:
 
 1. **是私人 / 限齡 / 會員影片** — 需要你的 YouTube 登入。工具下載失敗時會問你「要用瀏覽器裡已登入的帳號重試嗎?」,按 `y` 即可(用 Chrome/Edge 的話記得先**關掉瀏覽器**再重試)
-2. **沒裝 ffmpeg / Node.js** — 跑 `ntu-cool-materials doctor` 確認
+2. **沒裝 ffmpeg / Node.js** — 第一次啟動時選了不安裝的話,跑 `ntu-cool-materials doctor --fix` 補裝
 3. **影片有 DRM 保護** — 罕見但會發生,這種真的抓不下來
 
 跑 `ntu-cool-materials doctor` 看有沒有缺東西。
@@ -614,8 +628,9 @@ NTU 上課影片(cool-video)畫質維持來源原檔。
 ### `.secrets/` 資料夾
 
 工具會把登入資料存在 `~/.ntu-cool-gcm/.secrets/`(Windows 是 `C:\Users\<你的帳號>\.ntu-cool-gcm\.secrets\`;如果你執行的目錄下本來就有 `.secrets/`,會沿用那一個),裡面存:
-- 你登入後的 cookie(等同於登入狀態)
-- YouTube 的 cookie
+- 你登入 NTU COOL 後的 cookie(等同於登入狀態)
+- NotebookLM 的登入資料(如果有用匯入功能)
+- YouTube 的 cookie(只有你自己匯出過才會有)
 
 **這個資料夾等同於你的登入憑證**。請:
 
