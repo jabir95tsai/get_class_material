@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import itertools
+import shutil
 import sys
 import threading
 from collections.abc import Iterator
@@ -41,6 +42,22 @@ def _is_wide(ch: str) -> bool:
     return unicodedata.east_asian_width(ch) in ("W", "F")
 
 
+def _clip(text: str, max_width: int) -> str:
+    """Trim `text` to `max_width` cells. A line that wraps breaks the `\\r`
+    redraw (each frame would land on a new row), so long file names get an
+    ellipsis instead."""
+    if _display_width(text) <= max_width:
+        return text
+    out, width = [], 0
+    for ch in text:
+        w = 2 if _is_wide(ch) else 1
+        if width + w > max_width - 1:
+            break
+        out.append(ch)
+        width += w
+    return "".join(out) + "…"
+
+
 @contextlib.contextmanager
 def spinner(message: str, *, stream=None, interval: float = 0.1) -> Iterator[None]:
     """Show `message` with a rotating bar while the wrapped block runs."""
@@ -58,6 +75,10 @@ def spinner(message: str, *, stream=None, interval: float = 0.1) -> Iterator[Non
             out.flush()
         yield
         return
+
+    # Frame + space take 2 cells; leave 1 spare so the cursor never hits the
+    # last column (some consoles auto-wrap there).
+    message = _clip(message, max(10, shutil.get_terminal_size().columns - 3))
 
     stop = threading.Event()
 

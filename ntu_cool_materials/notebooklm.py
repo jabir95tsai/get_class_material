@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
 
+from .spinner import spinner
 from .storage import hide_file, sanitize_component, sha256_file
 
 DOCUMENT_TYPES = {".pdf", ".txt", ".md", ".docx", ".pptx", ".csv", ".epub"}
@@ -244,7 +245,8 @@ def import_plan(plan: ImportPlan, adapter: NotebookAdapter, *, notebook_url: str
                 record[source.digest] = {"title": source.title, "status": "pending"}
                 _save_state(path, state)
                 try:
-                    adapter.upload(staged, source.title)
+                    with spinner(f"  上傳中 {source.relative_path}"):
+                        adapter.upload(staged, source.title)
                 except Exception as exc:
                     # Do not include transport exception text: it may contain session URLs.
                     raise NotebookLMError(f"上傳尚未確認完成：{source.relative_path}。"

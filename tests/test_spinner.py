@@ -32,6 +32,20 @@ class _FakeStream:
             return "".join(self.chunks)
 
 
+class ClipTests(unittest.TestCase):
+    def test_clip_keeps_short_text(self):
+        from ntu_cool_materials.spinner import _clip
+
+        self.assertEqual(_clip("abc", 10), "abc")
+
+    def test_clip_counts_cjk_as_double_width(self):
+        from ntu_cool_materials.spinner import _clip, _display_width
+
+        clipped = _clip("上傳中上傳中上傳中", 8)
+        self.assertTrue(clipped.endswith("…"))
+        self.assertLessEqual(_display_width(clipped), 8)
+
+
 class SpinnerTests(unittest.TestCase):
     def test_non_tty_prints_message_once_no_animation(self) -> None:
         stream = _FakeStream(isatty=False)
