@@ -422,6 +422,26 @@ class PipelineTests(unittest.TestCase):
         browser.assert_not_called()
         self.assertEqual(stats.skipped, 1)
 
+    def test_youtube_backed_cool_video_uses_yt_dlp_not_http(self):
+        plan = self.plan([{"id": 1, "type": "ExternalTool", "title": "A",
+                           "external_url": "https://cool-video.dlc.ntu.edu.tw/courses/1/videos/2"}])
+        view = {"videoId": 2, "sourceUri": "https://www.youtube.com/watch?v=OxGcm2y3zaE"}
+
+        def fake_yt_dlp(cmd, timeout):
+            self.assertIn("https://youtu.be/OxGcm2y3zaE", cmd)
+            cache = Path(cmd[cmd.index("-P") + 1])
+            (cache / "OxGcm2y3zaE.mp4").write_bytes(b"\0\0\0\x18ftypmp42 video")
+
+        with patch.object(p, "_capture_cool_video_in_page", return_value=view), \
+             patch.object(p, "_download_signed_url") as http_get, \
+             patch.object(p.shutil, "which", side_effect=lambda name: "ffmpeg" if name == "ffmpeg" else None), \
+             patch.object(p.subprocess, "run", side_effect=fake_yt_dlp):
+            stats = p.capture_and_download_cool_videos_in_page(plan, Mock(), {}, course_id="1")
+        http_get.assert_not_called()
+        self.assertEqual((stats.done, stats.failed), (1, []))
+        pending, skipped = p._pending_cool_videos(plan)
+        self.assertEqual((pending, skipped), ([], 1))
+
     def test_login_cookie_jar_round_trips_for_reuse(self):
         headers = self.root / "secrets" / "ntu_cool_headers.txt"
         context = Mock()

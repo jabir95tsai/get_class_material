@@ -965,8 +965,39 @@ def _pending_cool_videos(plan):
     return pending, skipped
 
 
+def _download_youtube_backed_video(plan: CoursePlan, youtube_id: str, target: Path, *,
+                                   yt_dlp: str, yt_cookies: Path | None) -> None:
+    """Some cool-video entries only wrap a YouTube upload (sourceUri is a
+    watch page, no altSourceUri); fetching that URL returns YouTube's HTML."""
+    if shutil.which("ffmpeg") is None:
+        raise DownloadError("ffmpeg is required to merge YouTube video and audio")
+    cache = plan.course_dir / ".media-cache" / "youtube"
+    cache.mkdir(parents=True, exist_ok=True)
+    source = cache / f"{youtube_id}.mp4"
+    if not _valid_video(source):
+        source.unlink(missing_ok=True)
+        cookie_args = _youtube_cookie_args(yt_cookies, None) if yt_cookies else []
+        cmd = [yt_dlp, *cookie_args, *YT_DLP_BASE_ARGS, "--socket-timeout", "30", "--remux-video", "mp4",
+               "-P", str(cache), "-o", "%(id)s.%(ext)s", f"https://youtu.be/{youtube_id}"]
+        try:
+            subprocess.run(cmd, timeout=7200)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise DownloadError(f"YouTube downloader: {type(exc).__name__}") from None
+        if not _valid_video(source):
+            raise DownloadError(f"YouTube {youtube_id}: no complete playable MP4")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    part = target.with_name(target.name + ".part")
+    part.unlink(missing_ok=True)
+    try:
+        os.link(source, part)
+    except OSError:
+        shutil.copyfile(source, part)
+    part.replace(target)
+
+
 def capture_and_download_cool_videos_in_page(plan: CoursePlan, page, captured: dict[int, dict[str, Any]],
-                                              *, course_id: str, sso_timeout_sec: int = 600) -> StageStats:
+                                              *, course_id: str, sso_timeout_sec: int = 600,
+                                              yt_dlp: str = "yt-dlp", yt_cookies: Path | None = None) -> StageStats:
     pending, skipped = _pending_cool_videos(plan)
     stats = StageStats(skipped=skipped)
     with _manifest(plan) as store:
@@ -980,6 +1011,13 @@ def capture_and_download_cool_videos_in_page(plan: CoursePlan, page, captured: d
                     url = view.get("altSourceUri") or view.get("sourceUri")
                     if not url:
                         raise DownloadError("Video has no download source")
+                    youtube_ids = extract_youtube_ids(url)
+                    if youtube_ids:
+                        _download_youtube_backed_video(plan, youtube_ids[0], target,
+                                                       yt_dlp=yt_dlp, yt_cookies=yt_cookies)
+                        store.record_artifact(key, target, version)
+                        stats.done += 1
+                        break
                     if urllib.parse.urlsplit(url).path.lower().endswith((".mpd", ".m3u8")):
                         raise DownloadError("Only a streaming manifest is available; no downloadable MP4")
                     _download_signed_url(url, target)
@@ -1020,6 +1058,8 @@ def capture_and_download_cool_videos(
     headless: bool = False,
     sso_timeout_sec: int = 600,
     headers_path: Path | None = None,
+    yt_dlp: str = "yt-dlp",
+    yt_cookies: Path | None = None,
 ) -> StageStats:
     """Standalone entry point: open a Playwright context, log in, capture+download every cool-video.
 
@@ -1064,7 +1104,8 @@ def capture_and_download_cool_videos(
                 return stats
         try:
             stats = capture_and_download_cool_videos_in_page(
-                plan, page, captured, course_id=course_id, sso_timeout_sec=sso_timeout_sec)
+                plan, page, captured, course_id=course_id, sso_timeout_sec=sso_timeout_sec,
+                yt_dlp=yt_dlp, yt_cookies=yt_cookies)
         finally:
             if headers_path is not None:
                 _dump_cookies_to_headers_file(ctx, headers_path)
@@ -1373,15 +1414,20 @@ def download_course(
 
         if not skip_cool_videos:
             print(t("\n[5/5] NTU 上課影片 (cool-video)", "\n[5/5] NTU CDN videos (cool-video)"))
+            if yt_cookies is None:
+                from .cli import _secrets_dir
+                yt_cookies = _secrets_dir() / "youtube_cookies.txt"
             if browser is not None:
                 course_stats.cool_videos = capture_and_download_cool_videos_in_page(
                     plan, browser.page, browser.captured,
                     course_id=course_id, sso_timeout_sec=sso_timeout_sec,
+                    yt_dlp=yt_dlp, yt_cookies=yt_cookies,
                 )
             else:
                 course_stats.cool_videos = capture_and_download_cool_videos(
                     plan, course_id=course_id, profile_dir=profile_dir, headless=headless,
                     sso_timeout_sec=sso_timeout_sec, headers_path=headers_path,
+                    yt_dlp=yt_dlp, yt_cookies=yt_cookies,
                 )
 
         # Per-course overview at the course root.
