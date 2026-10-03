@@ -57,6 +57,28 @@ class PublicFlowTests(unittest.TestCase):
         self.assertTrue(run.call_args.kwargs["include_media"])
         self.assertEqual(run.call_args.kwargs["max_sources"], 17)
 
+    def test_guide_hashes_each_file_only_once(self):
+        from ntu_cool_materials import notebooklm, notebooklm_api
+        with patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), \
+             patch.object(notebooklm, "sha256_file", wraps=notebooklm.sha256_file) as hashed, \
+             patch.object(notebooklm_api, "NotebookLMAPIAdapter") as adapter, \
+             patch.object(notebooklm_api, "import_plan",
+                          return_value=notebooklm.ImportResult(notebook_url="https://notebook.google.com/notebook/x")):
+            guided_import(self.root)
+        adapter.assert_called_once()
+        self.assertEqual(hashed.call_count, 3)
+
+    def test_english_ui_covers_notebooklm_messages(self):
+        from ntu_cool_materials.i18n import set_lang
+        self.addCleanup(set_lang, "zh")
+        with patch("ntu_cool_materials.console.stdin_is_interactive", return_value=False), \
+             patch("ntu_cool_materials.notebooklm_api.run_api_import", side_effect=NotebookLMError("API failed")):
+            self.assertEqual(cli.main(["notebooklm", "--course-dir", str(self.root), "--lang", "en"]), 1)
+        self.assertIn("NotebookLM import incomplete: API failed", self.output.getvalue())
+        (self.root / "slides.xyz").write_text("x", encoding="utf-8")
+        from ntu_cool_materials.notebooklm import build_import_plan
+        self.assertIn(("slides.xyz", "format NotebookLM doesn't support"), build_import_plan(self.root).skipped)
+
     def test_existing_notebook_url_passed_to_api(self):
         url = "https://notebooklm.google.com/notebook/example"
         with patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), \

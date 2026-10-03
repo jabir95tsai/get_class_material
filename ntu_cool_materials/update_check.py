@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import time
 import urllib.request
 from pathlib import Path
@@ -126,6 +128,20 @@ def yt_dlp_version_age_days(version_str: str, now: datetime.date | None = None) 
         return (current_date - ver_date).days
     except (ValueError, OverflowError):
         return None
+
+
+def resolve_yt_dlp(yt_dlp: str = "yt-dlp") -> str | None:
+    """Full path of the yt-dlp executable, or None.
+
+    yt-dlp is one of our pip dependencies, so its launcher sits in this
+    Python's Scripts dir — which often isn't on PATH (fresh python.org
+    installs, `python -m ntu_cool_materials`, or right after doctor added it
+    for future shells only). Look there before declaring it missing."""
+    found = shutil.which(yt_dlp)
+    if found or os.path.dirname(yt_dlp):
+        return found
+    scripts = sysconfig.get_path("scripts")
+    return shutil.which(yt_dlp, path=scripts) if scripts else None
 
 
 def get_yt_dlp_version(yt_dlp: str = "yt-dlp") -> str | None:

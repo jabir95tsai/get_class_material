@@ -51,7 +51,6 @@ from . import console
 CANVAS_NETLOC = "cool.ntu.edu.tw"
 COOL_VIDEO_VIEW_RE = re.compile(r"/api/courses/(\d+)/videos/(\d+)/view$")
 LOGIN_RE = re.compile(r"/login|oauth2|saml", re.IGNORECASE)
-TITLE_PREFIX_RE = re.compile(r"^\s*([\w\-]+)")
 
 YT_DLP_BASE_ARGS = [
     "--js-runtimes", "node",
@@ -318,7 +317,7 @@ def _download_linked_files(plan, client, directory, links):
     week = WeekPlan(str(directory.resolve().relative_to(plan.course_dir.resolve())), {"items": items}, directory)
     linked_plan = CoursePlan(plan.course, plan.course_id, plan.course_dir, [week],
                              verify_files=plan.verify_files, workers=plan.workers, file_metadata=plan.file_metadata)
-    return download_files(linked_plan, client, all_file_types=True)
+    return download_files(linked_plan, client)
 
 
 # ---- per-stage workers ----
@@ -343,8 +342,8 @@ def _file_item_real_ext(item: dict[str, Any]) -> str:
     return real_ext
 
 
-def _file_item_target_name(item: dict[str, Any], *, all_file_types: bool) -> str:
-    """Preserve real file extensions. all_file_types remains a compatible CLI flag."""
+def _file_item_target_name(item: dict[str, Any]) -> str:
+    """Keep the real file extension; fall back to .pdf only when Canvas has none."""
     title = str(item.get("title") or "").strip() or f"item-{item.get('id')}"
     real_ext = _file_item_real_ext(item)
     use_ext = real_ext or ".pdf"
@@ -354,9 +353,7 @@ def _file_item_target_name(item: dict[str, Any], *, all_file_types: bool) -> str
     return f"{safe_title}{use_ext}"
 
 
-def download_files(
-    plan: CoursePlan, client: CanvasSessionClient, *, all_file_types: bool = False,
-) -> StageStats:
+def download_files(plan: CoursePlan, client: CanvasSessionClient) -> StageStats:
     """Refresh metadata, reserve unique paths, and transfer missing/changed files."""
     headers = _session_headers(client)
     stats = StageStats()
@@ -384,7 +381,7 @@ def download_files(
                     if item.get("_attachment"):
                         item["title"] = info.get("display_name") or info.get("filename") or item["title"]
                     key = _artifact_key(week, "file", fid)
-                    target = store.artifact_path(key, week.week_dir, _file_item_target_name(item, all_file_types=all_file_types))
+                    target = store.artifact_path(key, week.week_dir, _file_item_target_name(item))
                     item["_local_path"] = str(target)
                     version = _version(info)
                     size = int(info["size"]) if info.get("size") is not None else None
@@ -464,23 +461,6 @@ def save_pages(plan: CoursePlan, client: CanvasSessionClient, course_id: str) ->
             except (CanvasAPIError, DownloadError, OSError, ValueError) as exc:
                 stats.failed.append(f"{week.label}/{item.get('title')}: {exc}")
     return stats
-
-
-def _count_youtube_urls_in_plan(plan: CoursePlan) -> int:
-    """Distinct YouTube video IDs across the whole plan.
-
-    Used to size the "found N YouTube videos, want to log in?" prompt.
-    Distinct (not raw item count) because the same video may appear in
-    multiple modules and we don't want to overstate the work."""
-    seen: set[str] = set()
-    for week in plan.weeks:
-        for item in week.items:
-            if item.get("type") not in {"ExternalUrl", "ExternalTool"}:
-                continue
-            raw = str(item.get("external_url") or item.get("url") or "")
-            for vid in extract_youtube_ids(raw):
-                seen.add(vid)
-    return len(seen)
 
 
 def _youtube_cookie_args(cookies_path: Path, cookies_from_browser: str | None) -> list[str]:
@@ -1120,7 +1100,7 @@ def _build_session_client_from_file(headers_path: Path, base_url: str) -> Canvas
     return CanvasSessionClient(base_url=base_url, headers=read_headers_file(headers_path))
 
 
-def _write_course_overview(plan: CoursePlan, *, all_file_types: bool = False) -> Path:
+def _write_course_overview(plan: CoursePlan) -> Path:
     """Write a Markdown index at the course root listing every downloaded artifact per week.
     Designed to be readable by both humans and AI tools."""
     from datetime import datetime, timezone
@@ -1141,39 +1121,32 @@ def _write_course_overview(plan: CoursePlan, *, all_file_types: bool = False) ->
         module_name = week.module.get("name") or week.label
         lines.append(f"## {module_name}")
         lines.append("")
-        # Group items by file type for readability
+        # Group items by file type for readability, routing by what is on disk.
         per_type: dict[str, list[str]] = {"pdf": [], "md": [], "mp4": [], "other": []}
+        icons = {"pdf": "📄", "md": "📝", "mp4": "🎬", "other": "📎"}
         for item in week.items:
             kind = item.get("type")
             title = str(item.get("title") or "").strip()
+            # Stages record the reserved path; a skipped stage leaves only the default name.
             local = item.get("_local_path")
-            if local and Path(local).is_file():
+            if local:
                 path = Path(local)
-                rel = path.relative_to(plan.course_dir.resolve()).as_posix()
-                bucket = "md" if path.suffix == ".md" else "mp4" if path.suffix == ".mp4" else "other"
-                per_type[bucket].append(f"- [{title}](<{urllib.parse.quote(rel)}>)")
-                continue
-            if kind == "File":
-                fname = _file_item_target_name(item, all_file_types=all_file_types)
-                if (week.week_dir / fname).exists():
-                    # In default mode every file is .pdf on disk, so the dual
-                    # icon only matters under --all-file-types where extensions
-                    # are preserved. Either way we route by what's actually
-                    # on disk, not by what the source extension said.
-                    icon = "📄" if Path(fname).suffix.lower() == ".pdf" else "📎"
-                    bucket = "pdf" if Path(fname).suffix.lower() == ".pdf" else "other"
-                    per_type[bucket].append(f"- {icon} [{title}]({week.label}/{urllib.parse.quote(fname)})")
+            elif kind == "File":
+                path = week.week_dir / _file_item_target_name(item)
             elif kind == "Page":
-                fname = f"{sanitize_teacher_title(title)}.md"
-                if (week.week_dir / fname).exists():
-                    per_type["md"].append(f"- 📝 [{title}]({week.label}/{urllib.parse.quote(fname)})")
+                path = week.week_dir / f"{sanitize_teacher_title(title)}.md"
             elif kind in {"ExternalUrl", "ExternalTool"}:
-                fname = f"{sanitize_teacher_title(title)}.mp4"
-                if (week.week_dir / fname).exists():
-                    per_type["mp4"].append(f"- 🎬 [{title}]({week.label}/{urllib.parse.quote(fname)})")
-                else:
-                    raw = str(item.get("external_url") or item.get("url") or "")
-                    per_type["other"].append(f"- 🔗 [{title}]({raw})")
+                path = week.week_dir / f"{sanitize_teacher_title(title)}.mp4"
+            else:
+                continue
+            if path.is_file():
+                rel = path.resolve().relative_to(plan.course_dir.resolve()).as_posix()
+                suffix = path.suffix.lower().lstrip(".")
+                bucket = suffix if suffix in per_type else "other"
+                per_type[bucket].append(f"- {icons[bucket]} [{title}](<{urllib.parse.quote(rel)}>)")
+            elif kind in {"ExternalUrl", "ExternalTool"}:
+                raw = str(item.get("external_url") or item.get("url") or "")
+                per_type["other"].append(f"- 🔗 [{title}](<{raw}>)")
         for key in ("pdf", "md", "mp4", "other"):
             for line in per_type[key]:
                 lines.append(line)
@@ -1200,7 +1173,6 @@ def download_course(
     skip_pdfs: bool = False, skip_pages: bool = False,
     skip_announcements: bool = False,
     skip_youtube: bool = False, skip_cool_videos: bool = False,
-    all_file_types: bool = False,
     sso_timeout_sec: int = 600,
     verify_files: bool = False, workers: int = 3,
 ) -> CoursePlan:
@@ -1229,17 +1201,25 @@ def download_course(
         def _try_recover_session() -> bool:
             """Refresh SSO + cookies if we have a Playwright session. Returns True on success."""
             nonlocal client, browser, owns_browser
-            if browser is None:
-                if not console.stdin_is_interactive():
+            # A headless browser can't show the SSO page, so "waiting for the
+            # user to log in" would just hang for sso_timeout_sec.
+            if headless:
+                return False
+            try:
+                if browser is None:
+                    if not console.stdin_is_interactive():
+                        return False
+                    browser = open_browser_session(profile_dir=profile_dir, headless=False,
+                                                   course_id=course_id, sso_timeout_sec=sso_timeout_sec)
+                    owns_browser = True
+                print(t(
+                    "  → NTU COOL 登入已過期,在同一個瀏覽器重新登入...",
+                    "  → NTU COOL session expired, re-authenticating in the open browser...",
+                ))
+                if not _ensure_logged_in(browser.page, course_id, sso_timeout_sec):
                     return False
-                browser = open_browser_session(profile_dir=profile_dir, headless=headless,
-                                               course_id=course_id, sso_timeout_sec=sso_timeout_sec)
-                owns_browser = True
-            print(t(
-                "  → NTU COOL 登入已過期,在同一個瀏覽器重新登入...",
-                "  → NTU COOL session expired, re-authenticating in the open browser...",
-            ))
-            if not _ensure_logged_in(browser.page, course_id, sso_timeout_sec):
+            except Exception as exc:  # Playwright missing/crashed, or SSO aborted
+                print(t(f"  ✗ 無法重新登入: {exc}", f"  ✗ could not re-authenticate: {exc}"))
                 return False
             if not _dump_cookies_to_headers_file(browser.context, headers_path):
                 return False
@@ -1303,7 +1283,7 @@ def download_course(
         if not skip_pdfs:
             print(t("\n[2/5] 教材檔案", "\n[2/5] Files"))
             course_stats.pdfs = _run_with_session_retry(
-                lambda c: download_files(plan, c, all_file_types=all_file_types), t("PDF", "files")
+                lambda c: download_files(plan, c), t("PDF", "files")
             )
             print(t(
                 f"  下載 {course_stats.pdfs.done}、跳過 {course_stats.pdfs.skipped}、失敗 {len(course_stats.pdfs.failed)}",
@@ -1324,11 +1304,14 @@ def download_course(
             if excel.done or excel.failed:
                 print(t(f"  Excel → Markdown: 轉換 {excel.done}、失敗 {len(excel.failed)}",
                         f"  Excel → Markdown: {excel.done} converted, {len(excel.failed)} failed"))
+        if yt_cookies is None:
+            from .cli import _secrets_dir
+            yt_cookies = _secrets_dir() / "youtube_cookies.txt"
+        from .update_check import resolve_yt_dlp
+        yt_dlp = resolve_yt_dlp(yt_dlp) or yt_dlp
+
         if not skip_youtube:
             print(t("\n[4/5] YouTube 影片", "\n[4/5] YouTube videos"))
-            if yt_cookies is None:
-                from .cli import _secrets_dir
-                yt_cookies = _secrets_dir() / "youtube_cookies.txt"
             yt_cookies_path = yt_cookies
             has_youtube_jobs = any(
                 extract_youtube_ids(str(item.get("external_url") or item.get("url") or ""))
@@ -1354,7 +1337,10 @@ def download_course(
                 plan, cookies_path=yt_cookies_path, yt_dlp=yt_dlp
             )
             failed_count = len(course_stats.youtube.failed)
-            if failed_count > 0 and has_youtube_jobs and yt_dlp_update is None:
+            # Without ffmpeg every video fails the same way; neither a newer
+            # yt-dlp nor a YouTube login can fix that, so don't offer them.
+            retryable = shutil.which("ffmpeg") is not None
+            if failed_count > 0 and retryable and yt_dlp_update is None:
                 from .update_check import confirm_yt_dlp_update, update_yt_dlp
                 ok = False
                 if confirm_yt_dlp_update(t(
@@ -1370,7 +1356,7 @@ def download_course(
                     course_stats.youtube.done += retry_stats.done
                     course_stats.youtube.failed = retry_stats.failed
                     failed_count = len(course_stats.youtube.failed)
-            if maybe_retry_youtube_with_login(yt_cookies_path, failed_count):
+            if retryable and maybe_retry_youtube_with_login(yt_cookies_path, failed_count):
                 # Retry the still-missing videos using the YouTube login from
                 # the user's normal browser(s). We try each installed browser
                 # in turn and stop as soon as nothing's left failing — the
@@ -1414,25 +1400,29 @@ def download_course(
 
         if not skip_cool_videos:
             print(t("\n[5/5] NTU 上課影片 (cool-video)", "\n[5/5] NTU CDN videos (cool-video)"))
-            if yt_cookies is None:
-                from .cli import _secrets_dir
-                yt_cookies = _secrets_dir() / "youtube_cookies.txt"
-            if browser is not None:
-                course_stats.cool_videos = capture_and_download_cool_videos_in_page(
-                    plan, browser.page, browser.captured,
-                    course_id=course_id, sso_timeout_sec=sso_timeout_sec,
-                    yt_dlp=yt_dlp, yt_cookies=yt_cookies,
-                )
-            else:
-                course_stats.cool_videos = capture_and_download_cool_videos(
-                    plan, course_id=course_id, profile_dir=profile_dir, headless=headless,
-                    sso_timeout_sec=sso_timeout_sec, headers_path=headers_path,
-                    yt_dlp=yt_dlp, yt_cookies=yt_cookies,
-                )
+            try:
+                if browser is not None:
+                    course_stats.cool_videos = capture_and_download_cool_videos_in_page(
+                        plan, browser.page, browser.captured,
+                        course_id=course_id, sso_timeout_sec=sso_timeout_sec,
+                        yt_dlp=yt_dlp, yt_cookies=yt_cookies,
+                    )
+                else:
+                    course_stats.cool_videos = capture_and_download_cool_videos(
+                        plan, course_id=course_id, profile_dir=profile_dir, headless=headless,
+                        sso_timeout_sec=sso_timeout_sec, headers_path=headers_path,
+                        yt_dlp=yt_dlp, yt_cookies=yt_cookies,
+                    )
+            except Exception as exc:
+                # Playwright raises its own Error type (Chromium missing, profile
+                # locked by another window, network down mid-launch). Record it
+                # as a stage failure so the rest of the course still finishes.
+                course_stats.cool_videos.failed.append(f"cool-video: {type(exc).__name__}: {exc}")
+                print(t(f"  ✗ 上課影片階段失敗: {exc}", f"  ✗ cool-video stage failed: {exc}"))
 
         # Per-course overview at the course root.
         try:
-            overview_path = _write_course_overview(plan, all_file_types=all_file_types)
+            overview_path = _write_course_overview(plan)
             print(t(f"\n  目錄: {overview_path.name}", f"\n  overview: {overview_path.name}"))
         except Exception as exc:
             print(t(f"\n  (無法產生目錄: {exc})", f"\n  (could not write overview: {exc})"))

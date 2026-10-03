@@ -97,7 +97,8 @@ class NotebookLMTests(unittest.TestCase):
         from ntu_cool_materials.cli import _build_parser
         parser = _build_parser()
         for argv, expected in ((["pick"], True), (["pick", "--notebooklm-no-media"], False),
-                               (["pick", "--notebooklm-include-media"], True)):
+                               (["download-course", "--course-id", "1"], True),
+                               (["notebooklm", "--notebooklm-no-media"], False)):
             self.assertIs(parser.parse_args(argv).notebooklm_include_media, expected)
 
     def test_large_files_are_not_hashed_or_uploaded(self):

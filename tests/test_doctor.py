@@ -206,7 +206,7 @@ class OptionalToolDegradationTests(unittest.TestCase):
         import contextlib
 
         def fake_has(cmd: str) -> bool:
-            return cmd in {"node", "ffmpeg", "yt-dlp"}
+            return cmd in {"node", "ffmpeg"}
 
         def fake_run(cmd, timeout=5):
             if cmd[:1] == ["yt-dlp"]:
@@ -216,6 +216,7 @@ class OptionalToolDegradationTests(unittest.TestCase):
         with (
             mock.patch.object(doctor, "_has", side_effect=fake_has),
             mock.patch.object(doctor, "_run", side_effect=fake_run),
+            mock.patch("ntu_cool_materials.update_check.resolve_yt_dlp", return_value="yt-dlp"),
             # run_doctor does a (cached, best-effort) PyPI update check — keep
             # the test hermetic / offline by stubbing it.
             mock.patch("ntu_cool_materials.update_check.check_for_update", return_value=None),
@@ -353,6 +354,95 @@ class AddScriptsToUserPathPosixTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertTrue((self.home / ".bashrc").exists())
         self.assertFalse((self.home / ".zprofile").exists())
+
+
+class EnsureReadyTests(unittest.TestCase):
+    """Required tools install unasked; optional ones (winget/brew/PATH) are
+    offered once, and a "no" or a failed install isn't re-offered every launch."""
+
+    FFMPEG = "ffmpeg (下載 YouTube 影片用)"
+
+    def setUp(self) -> None:
+        import contextlib
+        import io
+        import tempfile
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state = Path(tmp.name) / "setup_state.json"
+        self.installs = 0
+        self.install_works = True
+        self.ffmpeg_ok = False
+        self.blocking_ok = True
+        out = contextlib.redirect_stdout(io.StringIO())
+        out.__enter__()
+        self.addCleanup(out.__exit__, None, None, None)
+        checks = mock.patch.object(doctor, "_all_checks", side_effect=self._checks)
+        checks.start()
+        self.addCleanup(checks.stop)
+
+    def _install(self) -> bool:
+        self.installs += 1
+        self.ffmpeg_ok = self.install_works
+        return self.install_works
+
+    def _install_blocking(self) -> bool:
+        self.blocking_ok = True
+        return True
+
+    def _checks(self, *_args):
+        return [
+            doctor.CheckResult(name="yt-dlp", ok=self.blocking_ok, auto_install=self._install_blocking),
+            doctor.CheckResult(name=self.FFMPEG, ok=self.ffmpeg_ok, optional=True,
+                               fix_command="winget install Gyan.FFmpeg", auto_install=self._install),
+        ]
+
+    def run_ready(self, answers=None, now=1_000_000.0):
+        input_fn = None if answers is None else mock.Mock(side_effect=answers)
+        with mock.patch("ntu_cool_materials.console.stdin_is_interactive", return_value=False):
+            ok = doctor.ensure_ready(headers_path=Path("h.txt"), youtube_cookies_path=Path("c.txt"),
+                                     state_path=self.state, input_fn=input_fn, now=now)
+        self.assertTrue(ok)
+        return input_fn
+
+    def test_optional_tool_is_installed_only_after_consent(self) -> None:
+        self.run_ready([""])
+        self.assertEqual(self.installs, 1)
+        self.assertNotIn(self.FFMPEG, doctor._load_setup_state(self.state).get("snoozed", {}))
+
+    def test_declined_offer_is_not_repeated_for_30_days(self) -> None:
+        self.run_ready(["n"])
+        self.assertEqual(self.installs, 0)
+        asked = self.run_ready(["y"], now=1_000_000.0 + 86400)
+        asked.assert_not_called()
+        asked = self.run_ready(["n"], now=1_000_000.0 + doctor.REOFFER_AFTER_SEC + 1)
+        asked.assert_called_once()
+
+    def test_failed_install_is_not_retried_every_launch(self) -> None:
+        self.install_works = False
+        self.run_ready(["y"])
+        self.assertEqual(self.installs, 1)
+        self.run_ready(["y"], now=1_000_000.0 + 3600)
+        self.assertEqual(self.installs, 1)
+
+    def test_no_terminal_never_installs_optional_tools(self) -> None:
+        self.run_ready(None)
+        self.assertEqual(self.installs, 0)
+        self.assertFalse(self.state.exists())
+
+    def test_required_tool_installs_without_asking(self) -> None:
+        self.blocking_ok = False
+        self.ffmpeg_ok = True
+        asked = self.run_ready([])
+        asked.assert_not_called()
+        self.assertTrue(self.blocking_ok)
+
+
+class YoutubeCookiesCheckTests(unittest.TestCase):
+    def test_missing_cookies_file_is_normal_not_a_warning(self) -> None:
+        result = doctor.check_youtube_cookies(Path("does-not-exist-cookies.txt"))
+        self.assertTrue(result.ok)
+        self.assertEqual(result.fix_command, "")
 
 
 if __name__ == "__main__":

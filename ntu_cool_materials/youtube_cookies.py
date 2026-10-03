@@ -6,23 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_PROFILE_DIR = ".secrets/youtube_browser_profile"
-DEFAULT_COOKIES_FILE = ".secrets/youtube_cookies.txt"
 YOUTUBE_URL = "https://www.youtube.com/"
-
-
-def _secrets_base() -> Path:
-    """Writable base for the cookies/profile defaults — mirrors
-    cli._secrets_dir so the standalone `youtube-cookies` command also works
-    from a non-writable CWD (e.g. C:\\WINDOWS\\system32). Uses ./.secrets when
-    it already exists, else ~/.ntu-cool-gcm/.secrets."""
-    legacy = Path(".secrets")
-    try:
-        if legacy.is_dir():
-            return legacy
-    except OSError:
-        pass
-    return Path.home() / ".ntu-cool-gcm" / ".secrets"
 
 
 class YouTubeCookieError(RuntimeError):
@@ -61,8 +45,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def export_youtube_cookies(
     *,
-    profile_dir: Path = Path(DEFAULT_PROFILE_DIR),
-    cookies_path: Path = Path(DEFAULT_COOKIES_FILE),
+    profile_dir: Path,
+    cookies_path: Path,
     headless: bool = False,
     browser_channel: str | None = None,
     timeout_ms: int = 180_000,
@@ -196,7 +180,9 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="youtube-cookies",
         description="Open a dedicated Playwright browser profile and export YouTube cookies for yt-dlp.",
     )
-    base = _secrets_base()
+    # Same home-anchored secrets dir as the main CLI, so its YouTube stage finds the file.
+    from .cli import _secrets_dir
+    base = _secrets_dir()
     parser.add_argument("--profile-dir", default=str(base / "youtube_browser_profile"),
                         help="Dedicated browser profile directory.")
     parser.add_argument("--cookies-file", default=str(base / "youtube_cookies.txt"),

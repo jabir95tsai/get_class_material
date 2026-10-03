@@ -162,13 +162,9 @@ class CourseFileHandlingTests(unittest.TestCase):
                 "content_details": {"display_name": f"week1 material{real_ext}"},
             }
             self.assertEqual(
-                course_pipeline._file_item_target_name(item, all_file_types=False),
+                course_pipeline._file_item_target_name(item),
                 f"week1 material{real_ext}",
                 f"{real_ext} should keep its real extension in default mode",
-            )
-            self.assertEqual(
-                course_pipeline._file_item_target_name(item, all_file_types=True),
-                f"week1 material{real_ext}",
             )
 
     def test_unknown_extension_forced_to_pdf_by_default(self) -> None:
@@ -181,7 +177,7 @@ class CourseFileHandlingTests(unittest.TestCase):
             "content_details": {"display_name": "lecture notes"},
         }
         self.assertEqual(
-            course_pipeline._file_item_target_name(item, all_file_types=False),
+            course_pipeline._file_item_target_name(item),
             "lecture notes.pdf",
         )
 
@@ -195,11 +191,7 @@ class CourseFileHandlingTests(unittest.TestCase):
             "content_details": {"display_name": "syllabus.pdf"},
         }
         self.assertEqual(
-            course_pipeline._file_item_target_name(item, all_file_types=False),
-            "syllabus.pdf",
-        )
-        self.assertEqual(
-            course_pipeline._file_item_target_name(item, all_file_types=True),
+            course_pipeline._file_item_target_name(item),
             "syllabus.pdf",
         )
 
@@ -280,7 +272,7 @@ class CourseFileHandlingTests(unittest.TestCase):
             self.assertIn("--cookies", cmd)
             self.assertEqual(cmd[cmd.index("--cookies") + 1], str(cookies))
 
-    def test_course_overview_uses_real_extension_for_all_file_types(self) -> None:
+    def test_course_overview_uses_real_file_extension(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             week_dir = root / "week1"
@@ -309,7 +301,7 @@ class CourseFileHandlingTests(unittest.TestCase):
                 ],
             )
 
-            overview = course_pipeline._write_course_overview(plan, all_file_types=True)
+            overview = course_pipeline._write_course_overview(plan)
             text = overview.read_text(encoding="utf-8")
             self.assertIn("week1%20slides.pptx", text)
             self.assertNotIn("week1%20slides.pdf", text)
@@ -459,49 +451,6 @@ class InstalledCookieBrowsersTests(unittest.TestCase):
                 self.assertEqual(
                     course_pipeline._installed_cookie_browsers(), ["brave", "chrome", "edge"]
                 )
-
-
-class CountYoutubeUrlsInPlanTests(unittest.TestCase):
-    def test_counts_distinct_video_ids(self) -> None:
-        """Same video appearing twice should count once.
-
-        Note: YouTube IDs are exactly 11 chars of [A-Za-z0-9_-] — short fake
-        IDs like 'abc' won't match extract_youtube_ids' regex. Use full-length
-        fixtures so the test exercises the real code path."""
-        VID_A = "dQw4w9WgXcQ"  # 11 chars
-        VID_B = "oHg5SJYRHA0"  # 11 chars, distinct
-        plan = course_pipeline.CoursePlan(
-            course={"id": "1", "name": "Course"}, course_id="1", course_dir=Path("."),
-            weeks=[
-                course_pipeline.WeekPlan(
-                    label="w1",
-                    module={"items": [
-                        {"id": 1, "type": "ExternalUrl", "title": "v1", "external_url": f"https://youtu.be/{VID_A}"},
-                        # Same video via different URL form — should dedupe.
-                        {"id": 2, "type": "ExternalUrl", "title": "v2", "external_url": f"https://www.youtube.com/watch?v={VID_A}"},
-                        {"id": 3, "type": "ExternalUrl", "title": "v3", "external_url": f"https://youtu.be/{VID_B}"},
-                    ]},
-                    week_dir=Path("./w1"),
-                )
-            ],
-        )
-        self.assertEqual(course_pipeline._count_youtube_urls_in_plan(plan), 2)
-
-    def test_ignores_non_youtube_external_urls(self) -> None:
-        plan = course_pipeline.CoursePlan(
-            course={"id": "1", "name": "Course"}, course_id="1", course_dir=Path("."),
-            weeks=[
-                course_pipeline.WeekPlan(
-                    label="w1",
-                    module={"items": [
-                        {"id": 1, "type": "ExternalUrl", "title": "doc", "external_url": "https://drive.google.com/file/d/xyz"},
-                        {"id": 2, "type": "File", "title": "slides.pdf"},
-                    ]},
-                    week_dir=Path("./w1"),
-                )
-            ],
-        )
-        self.assertEqual(course_pipeline._count_youtube_urls_in_plan(plan), 0)
 
 
 if __name__ == "__main__":

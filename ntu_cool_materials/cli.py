@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -70,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
     if not getattr(args, "command", None):
         parser.print_help()
         return 2
+    if getattr(args, "lang", None):
+        set_lang(args.lang)
 
     if hasattr(args, "notebooklm_max_sources"):
         if args.notebooklm_max_sources < 1:
@@ -223,7 +224,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     announcements.add_argument(
         "--profile-dir",
-        default=".secrets/ntu_cool_browser_profile",
+        default=default_profile,
         help="Persistent browser profile for --refresh-session.",
     )
     announcements.add_argument(
@@ -261,10 +262,6 @@ def _build_parser() -> argparse.ArgumentParser:
     pick.add_argument("--skip-announcements", action="store_true", help="Skip course announcements.")
     pick.add_argument("--skip-youtube", action="store_true")
     pick.add_argument("--skip-cool-videos", action="store_true")
-    pick.add_argument(
-        "--all-file-types", action="store_true",
-        help="Compatibility flag: all Canvas files already keep their known original extensions.",
-    )
     pick.add_argument(
         "--keep-terminal", action="store_true",
         help="Don't close the PowerShell window on quit (Windows only).",
@@ -309,10 +306,6 @@ def _build_parser() -> argparse.ArgumentParser:
     course.add_argument("--skip-announcements", action="store_true", help="Skip course announcements.")
     course.add_argument("--skip-youtube", action="store_true")
     course.add_argument("--skip-cool-videos", action="store_true")
-    course.add_argument(
-        "--all-file-types", action="store_true",
-        help="Compatibility flag: real file extensions are preserved by default.",
-    )
 
     notebook = subparsers.add_parser("notebooklm", help="Import an existing course folder into personal NotebookLM.")
     notebook_course = notebook.add_mutually_exclusive_group()
@@ -322,7 +315,6 @@ def _build_parser() -> argparse.ArgumentParser:
     notebook_mode = notebook.add_mutually_exclusive_group()
     notebook_mode.add_argument("--dry-run", action="store_true", help="List candidates without logging in or uploading.")
     notebook_mode.add_argument("--guide", action="store_true", help="Interactive notebook selection before importing.")
-    notebook_mode.add_argument("--api", action="store_true", help="Compatibility flag: the notebooklm-py API is the only import mode.")
     notebook_mode.add_argument("--verify-only", action="store_true", help="Read-only API check of remote sources and local journal; never upload or create notebooks.")
     for target in (pick, course, notebook):
         if target is not notebook:
@@ -333,15 +325,14 @@ def _build_parser() -> argparse.ArgumentParser:
                             help="Existing notebook URL; otherwise reuse the course mapping or create a notebook.")
         target.add_argument("--notebooklm-storage", default=None,
                             help="API storage_state.json path; otherwise use NOTEBOOKLM_HOME / notebooklm profile settings.")
-        media = target.add_mutually_exclusive_group()
-        media.add_argument("--notebooklm-no-media", dest="notebooklm_include_media", action="store_false",
-                           help="Skip local audio/video files (imported by default).")
-        # Media is on by default now; kept so existing commands keep working.
-        media.add_argument("--notebooklm-include-media", dest="notebooklm_include_media", action="store_true",
-                           help=argparse.SUPPRESS)
-        target.set_defaults(notebooklm_include_media=True)
+        target.add_argument("--notebooklm-no-media", dest="notebooklm_include_media", action="store_false",
+                            help="Skip local audio/video files (imported by default).")
         target.add_argument("--notebooklm-max-sources", type=int, default=50,
                             help="Total sources per notebook allowed by your plan (default: 50).")
+
+    for target in (course, notebook):
+        target.add_argument("--lang", choices=["zh", "en"], default="zh",
+                            help="UI language (default: zh / Traditional Chinese).")
 
     sync = subparsers.add_parser("sync", help="Download course files and module metadata.")
     sync.add_argument("--state", default="active", help="Canvas enrollment_state filter.")
@@ -418,8 +409,8 @@ def _cmd_sync(client: CanvasClient, args: argparse.Namespace) -> int:
     return 1 if any(item.failed for item in stats) else 0
 
 
-def _windows_parent_pid_of(pid: int) -> int | None:
-    """Walk Windows' process snapshot to find the parent PID of `pid`."""
+def _windows_process_info(pid: int) -> tuple[int, str] | None:
+    """(parent PID, lower-cased exe name) of `pid` from Windows' process snapshot."""
     if os.name != "nt":
         return None
     import ctypes
@@ -450,11 +441,28 @@ def _windows_parent_pid_of(pid: int) -> int | None:
         if ctypes.windll.kernel32.Process32First(h, ctypes.byref(pe)):
             while True:
                 if pe.th32ProcessID == pid:
-                    return int(pe.th32ParentProcessID)
+                    name = pe.szExeFile.decode("mbcs", errors="replace").lower()
+                    return int(pe.th32ParentProcessID), name
                 if not ctypes.windll.kernel32.Process32Next(h, ctypes.byref(pe)):
                     break
     finally:
         ctypes.windll.kernel32.CloseHandle(h)
+    return None
+
+
+_WINDOWS_SHELLS = {"powershell.exe", "pwsh.exe", "cmd.exe"}
+
+
+def _find_parent_shell(pid: int, process_info) -> int | None:
+    """`pid` or one of its next two ancestors if it is a shell, else None."""
+    for _ in range(3):
+        info = process_info(pid)
+        if info is None:
+            return None
+        parent_pid, name = info
+        if name in _WINDOWS_SHELLS:
+            return pid
+        pid = parent_pid
     return None
 
 
@@ -472,21 +480,21 @@ def _close_parent_terminal_on_quit() -> None:
     grandchild), but by this point we've already printed 'Bye.' and have
     nothing left to do.
 
-    We target the GRANDPARENT (parent of os.getppid()), because pip's
-    console-script wrapper on Windows is a `ntu-cool-gcm.exe` shim sitting
-    between Python and the shell:
+    We walk up from our parent to the nearest shell, because pip's
+    console-script wrapper (and the `py` launcher) can sit in between:
       powershell.exe  ←  what we kill
         └─ ntu-cool-gcm.exe   (= os.getppid())
             └─ python.exe     (= os.getpid())
+    Only a known shell is ever terminated. Under `python -m ...` the
+    grandparent is the terminal host or explorer.exe, which must never be
+    killed — so if no shell is found within a few hops, do nothing.
     """
     if os.name != "nt":
         return
     if not console.stdin_is_interactive():
         return
     try:
-        wrapper_pid = os.getppid()
-        shell_pid = _windows_parent_pid_of(wrapper_pid)
-        target_pid = shell_pid or wrapper_pid
+        target_pid = _find_parent_shell(os.getppid(), _windows_process_info)
         if not target_pid:
             return
         import ctypes
@@ -652,7 +660,8 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     _update_thread = threading.Thread(target=_bg_update_check, daemon=True)
     _update_thread.start()
 
-    if not ensure_ready(headers_path=headers_path, youtube_cookies_path=youtube_cookies):
+    if not ensure_ready(headers_path=headers_path, youtube_cookies_path=youtube_cookies,
+                        state_path=_secrets_dir() / "setup_state.json"):
         return 1
 
     _update_thread.join(timeout=2.0)
@@ -690,7 +699,7 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                 "  → Run from a writable folder, e.g. `cd $HOME` then `ntu-cool-gcm`.",
             ))
             return False
-        except RuntimeError as exc:
+        except Exception as exc:  # RuntimeError from SSO, or Playwright's own Error
             print(t(f"無法啟動瀏覽器: {exc}", f"Could not start browser: {exc}"))
             return False
         if not _dump_cookies_to_headers_file(new_browser.context, headers_path):
@@ -846,7 +855,6 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                 skip_announcements=args.skip_announcements,
                 skip_youtube=args.skip_youtube,
                 skip_cool_videos=args.skip_cool_videos,
-                all_file_types=args.all_file_types,
                 verify_files=args.verify_files, workers=args.workers,
             )
             successful = getattr(plan, "stats", None) is None or plan.stats.successful
@@ -858,7 +866,8 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
                     _import_notebooklm(plan.course_dir)
                 elif _notebooklm_prompt_enabled():
                     from .notebooklm_flow import choose
-                    if choose("\n要將這門課匯入 NotebookLM 嗎？[y/N]：", {"y", "n"}, "n") == "y":
+                    if choose(t("\n要將這門課匯入 NotebookLM 嗎？[y/N]：",
+                                "\nImport this course into NotebookLM? [y/N]: "), {"y", "n"}, "n") == "y":
                         _import_notebooklm(plan.course_dir)
             return successful
         except (RuntimeError, OSError, ValueError) as exc:
@@ -1175,7 +1184,6 @@ def pick_main(argv: list[str] | None = None) -> int:
     When called from the `ntu-cool-gcm` entry point, argv is None and we forward
     sys.argv[1:] so flags like `--help` and `--refresh-session` pass through.
     """
-    import sys
     forwarded = list(sys.argv[1:]) if argv is None else list(argv)
     # `--version`/`-V` would otherwise be forwarded into the `pick` subparser,
     # which doesn't define it. Handle it here so `ntu-cool-gcm -V` works.
@@ -1207,14 +1215,14 @@ def _cmd_download_course(base_url: str, args: argparse.Namespace) -> int:
             skip_announcements=args.skip_announcements,
             skip_youtube=args.skip_youtube,
             skip_cool_videos=args.skip_cool_videos,
-            all_file_types=args.all_file_types,
             verify_files=args.verify_files, workers=args.workers,
         )
-        if getattr(plan, "stats", None) is not None and not plan.stats.successful:
-            return 1
+        result = 0 if getattr(plan, "stats", None) is None or plan.stats.successful else 1
+        # Like `pick`, one failed item (e.g. a private YouTube video) must not
+        # block importing everything else that did download.
         if getattr(args, "notebooklm", False):
-            return _cmd_notebooklm(plan.course_dir, args)
-        return 0
+            result = max(result, _cmd_notebooklm(plan.course_dir, args))
+        return result
     except RuntimeError as exc:
         print(f"download-course aborted: {exc}")
         return 1
@@ -1254,10 +1262,14 @@ def _cmd_notebooklm(course_dir: Path | None, args: argparse.Namespace, *, guided
     except (RuntimeError, OSError, ValueError) as exc:
         # Only our own errors are safe to show; library errors may carry login URLs.
         from .notebooklm import NotebookLMError
-        detail = str(exc) if isinstance(exc, NotebookLMError) else "本機檔案或 NotebookLM 連線失敗，請確認路徑和登入狀態。"
-        print(f"NotebookLM 匯入未完成：{detail}")
+        detail = str(exc) if isinstance(exc, NotebookLMError) else t(
+            "本機檔案或 NotebookLM 連線失敗，請確認路徑和登入狀態。",
+            "A local file or the NotebookLM connection failed; check the path and your login.")
+        print(t(f"NotebookLM 匯入未完成：{detail}", f"NotebookLM import incomplete: {detail}"))
         if course_dir is not None:
-            print(f'已下載的教材都保留在本機；修正後可重試：\n  ntu-cool-materials notebooklm --course-dir "{course_dir}"')
+            retry = f'ntu-cool-materials notebooklm --course-dir "{course_dir}"'
+            print(t(f"已下載的教材都保留在本機；修正後可重試：\n  {retry}",
+                    f"Everything downloaded stays on disk; after fixing, retry with:\n  {retry}"))
         return 1
 
 

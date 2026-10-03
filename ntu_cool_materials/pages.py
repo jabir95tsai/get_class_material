@@ -1,13 +1,7 @@
 from __future__ import annotations
 
-import json
 import urllib.parse
-from pathlib import Path
 from typing import Any, Protocol
-
-from .announcements import html_to_markdown
-from .storage import atomic_write_text
-from .media_naming import sanitize_teacher_title
 
 
 class _PageClient(Protocol):
@@ -21,26 +15,3 @@ def fetch_page(client: _PageClient, course_id: str, slug: str) -> dict[str, Any]
     if not isinstance(data, dict):
         raise ValueError(f"Unexpected page response for {course_id}/{slug}: {type(data).__name__}")
     return data
-
-
-def page_markdown(page: dict[str, Any]) -> str:
-    title = page.get("title") or page.get("url") or "(untitled)"
-    body = html_to_markdown(page.get("body"), base_url=page.get("html_url") or "https://cool.ntu.edu.tw/")
-    parts = [f"# {title}"]
-    if body:
-        parts.append("")
-        parts.append(body)
-    return "\n".join(parts).strip() + "\n"
-
-
-def write_page(out_dir: Path, page: dict[str, Any]) -> tuple[Path, Path]:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stem = sanitize_teacher_title(
-        (page.get("title") or page.get("url") or "page").replace(":", ""),
-        max_length=160,
-    )
-    json_path = out_dir / f"{stem}.json"
-    md_path = out_dir / f"{stem}.md"
-    atomic_write_text(json_path, json.dumps(page, ensure_ascii=False, indent=2))
-    atomic_write_text(md_path, page_markdown(page))
-    return json_path, md_path

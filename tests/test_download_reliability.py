@@ -289,6 +289,54 @@ class PipelineTests(unittest.TestCase):
         opened.assert_called_once()
         browser.close.assert_called_once()
 
+    def test_headless_run_never_opens_a_login_browser_on_expiry(self):
+        with patch.object(p, "plan_course", side_effect=SessionExpiredError("expired")), \
+             patch("ntu_cool_materials.console.stdin_is_interactive", return_value=True), \
+             patch.object(p, "open_browser_session") as opened:
+            with self.assertRaises(SessionExpiredError):
+                p.download_course(course_id="1", output_dir=self.root, client=self.client, headless=True,
+                                  skip_announcements=True, skip_pdfs=True, skip_pages=True,
+                                  skip_youtube=True, skip_cool_videos=True)
+        opened.assert_not_called()
+
+    def test_cool_video_stage_crash_is_recorded_not_raised(self):
+        class PlaywrightError(Exception):
+            pass
+        with patch.object(p, "plan_course", return_value=self.plan([])), \
+             patch.object(p, "capture_and_download_cool_videos",
+                          side_effect=PlaywrightError("Executable doesn't exist")):
+            plan = p.download_course(course_id="1", output_dir=self.root, client=self.client,
+                                     skip_announcements=True, skip_pdfs=True, skip_pages=True, skip_youtube=True)
+        self.assertFalse(plan.stats.successful)
+        self.assertIn("PlaywrightError", plan.stats.cool_videos.failed[0])
+        self.assertTrue((self.root / ".download_report.json").is_file())
+
+    def test_missing_ffmpeg_skips_update_and_login_retry_prompts(self):
+        items = [{"type": "ExternalUrl", "title": "A", "external_url": "https://youtu.be/aaaaaaaaaaa"}]
+        with patch.object(p, "plan_course", return_value=self.plan(items)), \
+             patch.object(p.shutil, "which", return_value=None), \
+             patch("ntu_cool_materials.update_check.ensure_yt_dlp_updated", return_value=None), \
+             patch("ntu_cool_materials.update_check.confirm_yt_dlp_update") as confirm, \
+             patch.object(p, "maybe_retry_youtube_with_login") as login:
+            plan = p.download_course(course_id="1", output_dir=self.root, client=self.client,
+                                     yt_cookies=self.root / "none", skip_announcements=True,
+                                     skip_pdfs=True, skip_pages=True, skip_cool_videos=True)
+        self.assertEqual(len(plan.stats.youtube.failed), 1)
+        confirm.assert_not_called()
+        login.assert_not_called()
+
+    def test_download_course_imports_to_notebooklm_despite_failed_items(self):
+        headers = self.root / "headers.txt"
+        headers.write_text("User-Agent: synthetic")
+        args = cli._build_parser().parse_args(["download-course", "--course-id", "1", "--out", str(self.root),
+            "--headers-file", str(headers), "--notebooklm", "--skip-pages", "--skip-announcements",
+            "--skip-youtube", "--skip-cool-videos"])
+        with patch.object(p, "plan_course", return_value=self.plan([])), \
+             patch.object(p, "download_files", return_value=p.StageStats(failed=["synthetic failure"])), \
+             patch.object(cli, "_cmd_notebooklm", return_value=0) as imported:
+            self.assertEqual(cli._cmd_download_course(self.client.base_url, args), 1)
+        imported.assert_called_once()
+
     def test_initial_login_browser_closes_if_header_loading_fails(self):
         browser = Mock()
         with patch.object(p, "open_browser_session", return_value=browser), \
@@ -355,7 +403,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_unknown_real_extension_is_preserved_without_doubling(self):
         item = {"title": "exercise.py", "content_details": {"filename": "exercise.py"}}
-        self.assertEqual(p._file_item_target_name(item, all_file_types=False), "exercise.py")
+        self.assertEqual(p._file_item_target_name(item), "exercise.py")
 
     def test_youtube_only_submits_missing_ids_and_reuses_across_weeks(self):
         items = [{"type": "ExternalUrl", "title": title, "external_url": f"https://youtu.be/{vid}"}

@@ -14,6 +14,7 @@ print the right command for the user to run themselves.
 """
 from __future__ import annotations
 
+import json
 import os
 import platform
 import shutil
@@ -341,8 +342,10 @@ def check_playwright_chromium() -> CheckResult:
 
 
 def check_yt_dlp() -> CheckResult:
-    if _has("yt-dlp"):
-        code, line = _run(["yt-dlp", "--version"])
+    from .update_check import resolve_yt_dlp
+    executable = resolve_yt_dlp()
+    if executable:
+        code, line = _run([executable, "--version"])
         if code == 0:
             ver = line.strip()
             from .update_check import yt_dlp_version_age_days
@@ -464,7 +467,7 @@ def check_scripts_on_path() -> CheckResult:
     binaries into /opt/homebrew/bin which is already on PATH.
 
     NOTE: keep the `name` string fixed (not localized) — it's used as a
-    set-membership key by `ensure_ready`'s `recommended_names`. The rest
+    set-membership key by `RECOMMENDED_NAMES`. The rest
     of the user-facing strings here can vary by locale.
     """
     name = "Python Scripts 在 PATH 上"
@@ -505,13 +508,19 @@ def check_ntu_session(headers_path: Path) -> CheckResult:
 
 
 def check_youtube_cookies(cookies_path: Path) -> CheckResult:
+    # Not having a cookies file is the normal state: public/unlisted videos need
+    # no login, and private ones are retried with the login from the user's own
+    # browser when they fail. Don't warn, and don't point at a Playwright Google
+    # login — Google blocks sign-in on automation-controlled browsers.
     if not cookies_path.exists():
         return CheckResult(
             name="YouTube cookies (下載不公開影片用)",
-            ok=False,
+            ok=True,
             optional=True,
-            detail=f"找不到 {cookies_path}",
-            fix_command="youtube-cookies (會開啟瀏覽器讓你登入 Google)",
+            detail=t(
+                "未設定(一般不需要;私人影片下載失敗時會詢問是否改用瀏覽器的登入狀態)",
+                "not set (usually not needed; failed private videos offer a retry with your browser's login)",
+            ),
         )
     age_hr = (time.time() - cookies_path.stat().st_mtime) / 3600
     age_label = (
@@ -608,39 +617,130 @@ def run_doctor(
     return 1
 
 
+# "Blocking" — without these, nothing works at all. Refuse to proceed if we
+# can't get them installed. check_playwright_chromium reports under the package
+# name when Playwright itself can't be imported, so both names must block.
+BLOCKING_NAMES = {"Python 3.11 以上", "Playwright (Python 套件)", "Playwright Chromium", "yt-dlp"}
+# "Recommended" — only the YouTube stage needs them (and the PATH entry only
+# shortens `python -m ntu_cool_materials pick` to `ntu-cool-gcm`). They touch
+# the system (winget/brew, the user's PATH), so they are offered, never forced.
+RECOMMENDED_NAMES = {
+    "Node.js (下載 YouTube 影片用)",
+    "ffmpeg (下載 YouTube 影片用)",
+    "Python Scripts 在 PATH 上",
+}
+# A declined or failed offer stays quiet this long, so a broken winget or a
+# "no" doesn't turn into a prompt on every launch.
+REOFFER_AFTER_SEC = 30 * 24 * 3600
+
+
+def _load_setup_state(path: Path) -> dict:
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+        return state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_setup_state(path: Path, state: dict) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state), encoding="utf-8")
+    except OSError:
+        pass  # Worst case the offer comes back next launch.
+
+
+def _offer_recommended(missing: list[CheckResult], *, headers_path: Path, youtube_cookies_path: Path,
+                       state_path: Path, input_fn, now: float) -> None:
+    """Ask once before installing optional tools; remember a "no" or a failure."""
+    state = _load_setup_state(state_path)
+    snoozed = state.get("snoozed") if isinstance(state.get("snoozed"), dict) else {}
+
+    def _is_snoozed(name: str) -> bool:
+        if name not in snoozed:
+            return False
+        try:
+            return now - float(snoozed[name]) < REOFFER_AFTER_SEC
+        except (TypeError, ValueError):
+            return False
+
+    due = [c for c in missing if not _is_snoozed(c.name)]
+    if not due:
+        return
+    print(t("建議安裝(只有下載 YouTube 影片需要,其他教材不受影響):",
+            "Recommended (only YouTube downloads need these; everything else works without):"))
+    for c in due:
+        print(f"  {YELLOW_WARN} {c.name} — {c.detail}")
+
+    installable = [c for c in due if c.auto_install is not None]
+    answer = "n"
+    if installable and input_fn is not None:
+        try:
+            answer = input_fn(t("要現在自動安裝嗎? [Y/n]: ", "Install them now? [Y/n]: ")).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+    if answer not in {"", "y", "yes"}:
+        for c in due:
+            if c.fix_command:
+                print(f"    • {c.name}: {c.fix_command}")
+        if input_fn is None:
+            return  # Nobody could answer, so this isn't a "no" to remember.
+        print(t(
+            "  已略過;30 天內不會再問。想裝時執行 `ntu-cool-materials doctor --fix`。\n",
+            "  Skipped; won't ask again for 30 days. Run `ntu-cool-materials doctor --fix` anytime.\n",
+        ))
+        for c in due:
+            snoozed[c.name] = now
+        state["snoozed"] = snoozed
+        _save_setup_state(state_path, state)
+        return
+
+    installed: set[str] = set()
+    for c in installable:
+        print(f"  → {c.name}")
+        if c.auto_install():
+            installed.add(c.name)
+        print()
+    after = {c.name: c for c in _all_checks(headers_path, youtube_cookies_path)}
+    for c in due:
+        if after.get(c.name, c).ok:
+            snoozed.pop(c.name, None)
+            continue
+        snoozed[c.name] = now
+        if c.name in installed:
+            # winget/brew/PATH changes only reach newly started terminals.
+            print(t(f"  {YELLOW_WARN} {c.name}: 已安裝,重新開啟終端機後生效。",
+                    f"  {YELLOW_WARN} {c.name}: installed; takes effect in a new terminal window."))
+        else:
+            print(t(f"  {YELLOW_WARN} {c.name} 沒裝起來(YouTube 下載會跳過): {c.fix_command}",
+                    f"  {YELLOW_WARN} {c.name} didn't install (YouTube downloads will be skipped): {c.fix_command}"))
+    state["snoozed"] = snoozed
+    _save_setup_state(state_path, state)
+
+
 def ensure_ready(
     *,
     headers_path: Path = Path(".secrets/ntu_cool_headers.txt"),
     youtube_cookies_path: Path = Path(".secrets/youtube_cookies.txt"),
-    interactive: bool = True,
+    state_path: Path | None = None,
+    input_fn=None,
+    now: float | None = None,
 ) -> bool:
     """Quiet first-run check used by `pick`. Returns True iff every required item is OK
     after auto-fix attempts. Stays silent when everything is already fine.
 
-    Strategy:
-      1. Run all required checks.
-      2. If anything fails with an auto_install hook, run it (no prompt — it's a routine
-         setup install, not destructive).
-      3. Re-check; if still missing required items, print remaining hints and return False.
+    Required items are installed without asking (it's routine setup and nothing
+    works without them). Recommended ones are offered with a [Y/n] prompt; a
+    "no" or a failed install is remembered in `state_path` for 30 days. With no
+    terminal to answer (`input_fn` None and stdin not interactive) nothing
+    optional is installed.
     """
-    # "Blocking" — without these, nothing works at all. Refuse to proceed if
-    # we can't get them installed.
-    blocking_names = {"Python 3.11 以上", "Playwright Chromium", "yt-dlp"}
-    # "Strongly recommended" — needed for the YouTube stage but not the
-    # PDF / Page / NTU CDN stages. Auto-install best-effort; if the install
-    # fails (no winget, no brew, etc.), warn and let the user proceed —
-    # download_youtube has its own pre-check that prints a clear install
-    # hint at the moment YouTube downloads would fire.
-    recommended_names = {
-        "Node.js (下載 YouTube 影片用)",
-        "ffmpeg (下載 YouTube 影片用)",
-        # Not blocking — if Scripts isn't on PATH, the user invoked us via
-        # `python -m ntu_cool_materials pick` and the pick already works.
-        # The check exists to upgrade that to the shorter `ntu-cool-gcm`
-        # for future runs.
-        "Python Scripts 在 PATH 上",
-    }
-    relevant = blocking_names | recommended_names
+    from . import console
+    if state_path is None:
+        state_path = headers_path.parent / "setup_state.json"
+    if input_fn is None and console.stdin_is_interactive():
+        input_fn = input
+    relevant = BLOCKING_NAMES | RECOMMENDED_NAMES
 
     # Gathering the checks is the real wait the user sits through before the
     # course list shows (Playwright launches a context to detect Chromium —
@@ -650,55 +750,36 @@ def ensure_ready(
     from .spinner import spinner
     with spinner(t("檢查環境中…", "Checking your setup…")):
         initial = [c for c in _all_checks(headers_path, youtube_cookies_path) if c.name in relevant]
-    missing = [c for c in initial if not c.ok]
-    if not missing:
-        return True
+    missing_blocking = [c for c in initial if not c.ok and c.name in BLOCKING_NAMES]
+    missing_recommended = [c for c in initial if not c.ok and c.name in RECOMMENDED_NAMES]
 
-    print(t("第一次設定: 還缺少幾個東西。\n", "First-time setup: a few things still need to be installed.\n"))
-    for c in missing:
-        print(f"  {RED_CROSS} {c.name} — {c.detail}")
-
-    auto_fixable = [c for c in missing if c.auto_install is not None]
-    manual_blocking = [c for c in missing if c.auto_install is None and c.name in blocking_names]
-
-    if auto_fixable:
-        print(t(
-            f"\n自動安裝 {len(auto_fixable)} 個項目...\n",
-            f"\nInstalling {len(auto_fixable)} item(s) automatically...\n",
-        ))
-        for c in auto_fixable:
+    if missing_blocking:
+        print(t("第一次設定: 還缺少幾個必要項目。\n", "First-time setup: a few required items are missing.\n"))
+        for c in missing_blocking:
+            print(f"  {RED_CROSS} {c.name} — {c.detail}")
+        manual = [c for c in missing_blocking if c.auto_install is None]
+        if manual:
+            print(t("\n請手動安裝以下必要項目後再重試:\n", "\nPlease install these required items manually, then re-run:\n"))
+            for c in manual:
+                print(f"  • {c.name}: {c.fix_command}")
+            return False
+        print(t(f"\n自動安裝 {len(missing_blocking)} 個項目...\n",
+                f"\nInstalling {len(missing_blocking)} item(s) automatically...\n"))
+        for c in missing_blocking:
             print(f"  → {c.name}")
             c.auto_install()
             print()
+        still = [c for c in _all_checks(headers_path, youtube_cookies_path)
+                 if not c.ok and c.name in BLOCKING_NAMES]
+        if still:
+            print(t("自動安裝後必要項目仍有問題:\n", "Required items still failing after auto-install:\n"))
+            for c in still:
+                print(f"  • {c.name}: {c.fix_command}")
+            return False
+        print(t(f"{GREEN_CHECK} 必要項目已就緒。\n", f"{GREEN_CHECK} Required items ready.\n"))
 
-    if manual_blocking:
-        print(t("請手動安裝以下必要項目後再重試:\n", "Please install these required items manually, then re-run:\n"))
-        for c in manual_blocking:
-            print(f"  • {c.name}: {c.fix_command}")
-        return False
-
-    after = [c for c in _all_checks(headers_path, youtube_cookies_path) if c.name in relevant]
-    still_missing_blocking = [c for c in after if not c.ok and c.name in blocking_names]
-    still_missing_recommended = [c for c in after if not c.ok and c.name in recommended_names]
-
-    if still_missing_blocking:
-        print(t("自動安裝後必要項目仍有問題:\n", "Required items still failing after auto-install:\n"))
-        for c in still_missing_blocking:
-            print(f"  • {c.name}: {c.fix_command}")
-        return False
-
-    if still_missing_recommended:
-        print(t(
-            "\n以下項目沒裝起來(YouTube 下載會跳過):\n",
-            "\nThese installs didn't take (YouTube downloads will be skipped):\n",
-        ))
-        for c in still_missing_recommended:
-            print(f"  • {c.name}: {c.fix_command}")
-        print(t(
-            "  之後可以手動裝完再重新打開,或執行 `ntu-cool-materials doctor --fix` 再試一次。\n",
-            "  Install them manually then restart this terminal, or re-run `ntu-cool-materials doctor --fix`.\n",
-        ))
-        # don't return False — PDFs / Pages / cool-video still work
-
-    print(t(f"{GREEN_CHECK} 設定完成。\n", f"{GREEN_CHECK} Setup complete.\n"))
+    if missing_recommended:
+        _offer_recommended(missing_recommended, headers_path=headers_path,
+                           youtube_cookies_path=youtube_cookies_path, state_path=state_path,
+                           input_fn=input_fn, now=time.time() if now is None else now)
     return True
