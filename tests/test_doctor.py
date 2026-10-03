@@ -438,6 +438,48 @@ class EnsureReadyTests(unittest.TestCase):
         self.assertTrue(self.blocking_ok)
 
 
+class EnsureReadyChainedInstallTests(unittest.TestCase):
+    def test_blocker_revealed_by_an_install_is_installed_in_the_same_launch(self) -> None:
+        import contextlib
+        import io
+
+        state = {"package": False, "chromium": False}
+
+        def install(key):
+            def run() -> bool:
+                state[key] = True
+                return True
+            return run
+
+        def checks(*_args):
+            if not state["package"]:  # Chromium can't even be probed without the package
+                return [doctor.CheckResult(name="Playwright (Python 套件)", ok=False, auto_install=install("package"))]
+            return [doctor.CheckResult(name="Playwright Chromium", ok=state["chromium"],
+                                       auto_install=install("chromium"))]
+
+        with mock.patch.object(doctor, "_all_checks", side_effect=checks), \
+             mock.patch("ntu_cool_materials.console.stdin_is_interactive", return_value=False), \
+             contextlib.redirect_stdout(io.StringIO()):
+            ok = doctor.ensure_ready(headers_path=Path("h.txt"), youtube_cookies_path=Path("c.txt"),
+                                     state_path=Path("unused.json"))
+        self.assertTrue(ok)
+        self.assertTrue(state["chromium"])
+
+    def test_failing_installer_is_tried_once(self) -> None:
+        import contextlib
+        import io
+
+        install = mock.Mock(return_value=False)
+        checks = lambda *_args: [doctor.CheckResult(name="yt-dlp", ok=False, auto_install=install)]
+        with mock.patch.object(doctor, "_all_checks", side_effect=checks), \
+             mock.patch("ntu_cool_materials.console.stdin_is_interactive", return_value=False), \
+             contextlib.redirect_stdout(io.StringIO()):
+            ok = doctor.ensure_ready(headers_path=Path("h.txt"), youtube_cookies_path=Path("c.txt"),
+                                     state_path=Path("unused.json"))
+        self.assertFalse(ok)
+        install.assert_called_once()
+
+
 class YoutubeCookiesCheckTests(unittest.TestCase):
     def test_missing_cookies_file_is_normal_not_a_warning(self) -> None:
         result = doctor.check_youtube_cookies(Path("does-not-exist-cookies.txt"))
