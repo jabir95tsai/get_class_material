@@ -6,7 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ntu_cool_materials.storage import ManifestStore, atomic_write_text, sanitize_component, sha256_file
+from ntu_cool_materials.storage import (
+    ManifestStore, atomic_write_text, hide_dot_entries, sanitize_component, sha256_file,
+)
 
 
 class StorageTests(unittest.TestCase):
@@ -71,6 +73,23 @@ class HiddenFileTests(unittest.TestCase):
             ManifestStore(db).close()
             self.assert_hidden(db)
             ManifestStore(db).close()
+
+    def test_hide_dot_entries_covers_folders_and_old_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache = root / ".media-cache"
+            (cache / "youtube").mkdir(parents=True)
+            old_state = root / ".notebooklm-import.json"
+            old_state.write_text("{}", encoding="utf-8")
+            week = root / "week1"
+            week.mkdir()
+
+            hide_dot_entries(root)
+
+            self.assert_hidden(cache)
+            self.assertTrue((cache / "youtube").is_dir())
+            self.assert_hidden(old_state)
+            self.assert_hidden(week, hidden=False)
 
 
 if __name__ == "__main__":

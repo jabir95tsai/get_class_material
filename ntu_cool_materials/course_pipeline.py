@@ -43,7 +43,7 @@ from .i18n import t
 from .media_naming import build_video_title_map, extract_youtube_ids, sanitize_teacher_title
 from .session_client import DROP_REQUEST_HEADER_NAMES, CanvasSessionClient
 from .spreadsheet_convert import convert_spreadsheets
-from .storage import ManifestStore, atomic_write_text, course_directory_name
+from .storage import ManifestStore, atomic_write_text, course_directory_name, hide_dot_entries
 from .http_io import DownloadError, download as download_http, origin
 from . import console
 
@@ -1422,6 +1422,7 @@ def download_course(
                 for name, stage in vars(course_stats).items()}}, ensure_ascii=False, indent=2))
         # Older versions wrote a visible report; the hidden one above replaces it.
         (plan.course_dir / "download_report.json").unlink(missing_ok=True)
+        hide_dot_entries(plan.course_dir)
         return plan
     finally:
         if owns_browser and browser is not None:

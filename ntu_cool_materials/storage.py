@@ -102,11 +102,27 @@ def hide_file(path: Path) -> None:
 
         attributes = path.stat().st_file_attributes
         if not attributes & stat.FILE_ATTRIBUTE_HIDDEN:
-            # FILE_ATTRIBUTE_NORMAL is only valid on its own, so drop it before combining.
-            ctypes.windll.kernel32.SetFileAttributesW(
-                str(path), (attributes & ~stat.FILE_ATTRIBUTE_NORMAL) | stat.FILE_ATTRIBUTE_HIDDEN)
+            # FILE_ATTRIBUTE_NORMAL is only valid on its own and DIRECTORY cannot be set,
+            # so drop both before combining.
+            settable = attributes & ~(stat.FILE_ATTRIBUTE_NORMAL | stat.FILE_ATTRIBUTE_DIRECTORY)
+            ctypes.windll.kernel32.SetFileAttributesW(str(path), settable | stat.FILE_ATTRIBUTE_HIDDEN)
     except (OSError, AttributeError):
         pass
+
+
+def hide_dot_entries(directory: Path) -> None:
+    """Hide every dot-prefixed file or folder directly inside ``directory``.
+
+    Catches bookkeeping that was created by plain mkdir (``.media-cache``) or written
+    before files were hidden on write.
+    """
+    try:
+        entries = list(directory.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if entry.name.startswith("."):
+            hide_file(entry)
 
 
 def _is_unsafe_filename_char(char: str) -> bool:
