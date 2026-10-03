@@ -5,16 +5,18 @@ Public API used by `cli.download-course`:
     download_files(plan, client) -> StageStats
     save_pages(plan, client, course_id) -> StageStats
     download_youtube(plan, *, cookies_path, yt_dlp) -> StageStats
-    capture_and_download_cool_videos(plan, *, course_id, profile_dir, headless) -> StageStats
+    capture_and_download_cool_videos(plan, *, course_id, profile_dir, headless, headers_path) -> StageStats
 
 Completed artifacts are identified by source ID and verified against a persistent manifest.
 
 Why a single `capture_and_download_cool_videos`: NTU SAML session cookies on
 cool.ntu.edu.tw are session-only (die when the Chromium process exits), so the
-LTI launches must happen inside the same Playwright context that established
-login. The function opens one persistent context, waits for SSO if the course
-root bounces to /login, then walks every cool-video module item and downloads
-the transcoded.mp4 from the captured /api/.../view JSON's altSourceUri.
+LTI launches must happen inside a Playwright context that carries that login.
+The function opens one invisible persistent context, re-injects the cookies
+saved at login (`ntu_cool_storage_state.json` next to the headers file), and
+only falls back to a visible SSO window if that saved login has expired. It
+then walks every cool-video module item and downloads the transcoded.mp4 from
+the captured /api/.../view JSON's altSourceUri.
 """
 from __future__ import annotations
 
@@ -824,7 +826,84 @@ def _dump_cookies_to_headers_file(context, headers_path: Path) -> bool:
         ]) + "\n",
         encoding="utf-8",
     )
+    # The full cookie jar (with domain/path/secure, plus the NTU SSO cookies)
+    # lets a later, invisible Chromium resume this login: Canvas session
+    # cookies don't survive the browser exiting, even in a persistent profile.
+    try:
+        atomic_write_text(_storage_state_path(headers_path), json.dumps({"cookies": context.cookies()}))
+    except (OSError, TypeError, ValueError):
+        pass
     return True
+
+
+STORAGE_STATE_NAME = "ntu_cool_storage_state.json"
+_COOKIE_KEYS = ("name", "value", "domain", "path", "expires", "httpOnly", "secure", "sameSite")
+
+
+def _storage_state_path(headers_path: Path) -> Path:
+    return headers_path.with_name(STORAGE_STATE_NAME)
+
+
+def _saved_login_cookies(headers_path: Path) -> list[dict[str, Any]]:
+    """Cookies from the last login, in Playwright `add_cookies` form.
+
+    Prefers the saved cookie jar; falls back to the headers file's `cookie:`
+    line (written by older versions and by `ntu-cool-session`)."""
+    try:
+        saved = json.loads(_storage_state_path(headers_path).read_text(encoding="utf-8")).get("cookies")
+        cookies = [{k: c[k] for k in _COOKIE_KEYS if k in c} for c in saved
+                   if isinstance(c, dict) and c.get("name") and c.get("domain")]
+        if cookies:
+            return cookies
+    except (OSError, ValueError, AttributeError, TypeError):
+        pass
+    from .session_client import read_headers_file
+    try:
+        headers = read_headers_file(headers_path)
+    except (OSError, ValueError):
+        return []
+    header = next((v for k, v in headers.items() if k.lower() == "cookie"), "")
+    cookies = []
+    for part in header.split(";"):
+        name, sep, value = part.strip().partition("=")
+        if sep and name:
+            cookies.append({"name": name, "value": value, "domain": CANVAS_NETLOC, "path": "/", "secure": True})
+    return cookies
+
+
+def _inject_saved_login(context, headers_path: Path | None) -> int:
+    """Add the saved login cookies to a fresh context. Returns how many stuck."""
+    if headers_path is None:
+        return 0
+    added = 0
+    for cookie in _saved_login_cookies(headers_path):
+        try:  # one at a time: a single malformed cookie must not drop the rest
+            context.add_cookies([cookie])
+            added += 1
+        except Exception:
+            pass
+    return added
+
+
+def _session_alive(page, course_id: str | None, settle_ms: int = 15000) -> bool:
+    """Open the course without waiting on the user; True if Canvas let us in.
+
+    A saved NTU SSO cookie can bounce through the SAML pages on its own, so a
+    login URL gets `settle_ms` to resolve before we call the session dead."""
+    from playwright.sync_api import TimeoutError as PWTimeout
+
+    target = f"https://{CANVAS_NETLOC}/courses/{course_id}" if course_id else f"https://{CANVAS_NETLOC}/courses"
+    try:
+        page.goto(target, wait_until="domcontentloaded", timeout=60000)
+    except PWTimeout:
+        pass
+    if not LOGIN_RE.search(page.url) and page.url != "about:blank":
+        return True
+    try:
+        page.wait_for_url(lambda u: not LOGIN_RE.search(u) and u != "about:blank", timeout=settle_ms)
+        return True
+    except PWTimeout:
+        return False
 
 
 def _capture_cool_video_in_page(page, captured: dict[int, dict[str, Any]],
@@ -940,8 +1019,13 @@ def capture_and_download_cool_videos(
     profile_dir: Path = Path(".secrets/ntu_cool_browser_profile"),
     headless: bool = False,
     sso_timeout_sec: int = 600,
+    headers_path: Path | None = None,
 ) -> StageStats:
-    """Standalone entry point: open a Playwright context, log in, capture+download every cool-video."""
+    """Standalone entry point: open a Playwright context, log in, capture+download every cool-video.
+
+    Runs invisibly on the saved login from `headers_path` when it is still
+    valid; a visible SSO window opens only if it has expired (never with
+    `headless`). The refreshed cookies are saved back for the next course."""
     stats = StageStats()
     pending, stats.skipped = _pending_cool_videos(plan)
     if not pending:
@@ -954,19 +1038,36 @@ def capture_and_download_cool_videos(
         return stats
     profile_dir.parent.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir), headless=headless, accept_downloads=False)
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        captured: dict[int, dict[str, Any]] = {}
-        page.on("response", make_cool_video_response_handler(captured))
-        if not _ensure_logged_in(page, course_id, sso_timeout_sec):
+        def launch(visible: bool):
+            ctx = p.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir), headless=not visible, accept_downloads=False)
+            _inject_saved_login(ctx, headers_path)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            captured: dict[int, dict[str, Any]] = {}
+            page.on("response", make_cool_video_response_handler(captured))
+            return ctx, page, captured
+
+        ctx, page, captured = launch(visible=False)
+        if not _session_alive(page, course_id):
             ctx.close()
-            stats.failed.extend(f"{job[4].name}: SSO login failed" for job in pending)
-            return stats
+            if headless:
+                print(t("    NTU COOL 登入已過期,--headless 模式無法開視窗重新登入",
+                        "    NTU COOL login expired; --headless can't open a window to log in again"))
+                stats.failed.extend(f"{job[4].name}: SSO login required" for job in pending)
+                return stats
+            print(t("    NTU COOL 登入已過期,開啟瀏覽器重新登入",
+                    "    NTU COOL login expired; opening a browser to log in again"))
+            ctx, page, captured = launch(visible=True)
+            if not _ensure_logged_in(page, course_id, sso_timeout_sec):
+                ctx.close()
+                stats.failed.extend(f"{job[4].name}: SSO login failed" for job in pending)
+                return stats
         try:
             stats = capture_and_download_cool_videos_in_page(
                 plan, page, captured, course_id=course_id, sso_timeout_sec=sso_timeout_sec)
         finally:
+            if headers_path is not None:
+                _dump_cookies_to_headers_file(ctx, headers_path)
             ctx.close()
     return stats
 
@@ -1280,7 +1381,7 @@ def download_course(
             else:
                 course_stats.cool_videos = capture_and_download_cool_videos(
                     plan, course_id=course_id, profile_dir=profile_dir, headless=headless,
-                    sso_timeout_sec=sso_timeout_sec,
+                    sso_timeout_sec=sso_timeout_sec, headers_path=headers_path,
                 )
 
         # Per-course overview at the course root.

@@ -422,6 +422,71 @@ class PipelineTests(unittest.TestCase):
         browser.assert_not_called()
         self.assertEqual(stats.skipped, 1)
 
+    def test_login_cookie_jar_round_trips_for_reuse(self):
+        headers = self.root / "secrets" / "ntu_cool_headers.txt"
+        context = Mock()
+        jar = [{"name": "_normandy_session", "value": "s", "domain": "cool.ntu.edu.tw", "path": "/",
+                "expires": -1, "httpOnly": True, "secure": True, "sameSite": "Lax", "partitionKey": "x"},
+               {"name": "MSISAuth", "value": "sso", "domain": "adfs.ntu.edu.tw", "path": "/adfs"}]
+        context.cookies.side_effect = lambda *urls: jar[:1] if urls else jar
+        self.assertTrue(p._dump_cookies_to_headers_file(context, headers))
+        self.assertIn("_normandy_session=s", headers.read_text(encoding="utf-8"))
+        cookies = p._saved_login_cookies(headers)
+        self.assertEqual([c["name"] for c in cookies], ["_normandy_session", "MSISAuth"])
+        self.assertNotIn("partitionKey", cookies[0])
+
+    def test_saved_login_falls_back_to_headers_file_cookie_line(self):
+        headers = self.root / "ntu_cool_headers.txt"
+        headers.write_text("accept: */*\nCookie: a=1; b=x=y\n", encoding="utf-8")
+        self.assertEqual(p._saved_login_cookies(headers), [
+            {"name": "a", "value": "1", "domain": "cool.ntu.edu.tw", "path": "/", "secure": True},
+            {"name": "b", "value": "x=y", "domain": "cool.ntu.edu.tw", "path": "/", "secure": True},
+        ])
+        self.assertEqual(p._saved_login_cookies(self.root / "missing.txt"), [])
+
+    def _cool_video_browser(self, alive, *, headless=False):
+        plan = self.plan([{"id": 1, "type": "ExternalTool", "title": "A",
+                           "external_url": "https://cool-video.dlc.ntu.edu.tw/courses/1/videos/2"}])
+        headers = self.root / "ntu_cool_headers.txt"
+        headers.write_text("cookie: _normandy_session=s\n", encoding="utf-8")
+        pw = Mock()
+        pw.chromium.launch_persistent_context.return_value.pages = []
+        manager = Mock()
+        manager.return_value.__enter__ = Mock(return_value=pw)
+        manager.return_value.__exit__ = Mock(return_value=False)
+        with patch("playwright.sync_api.sync_playwright", manager), \
+             patch.object(p, "_session_alive", return_value=alive), \
+             patch.object(p, "_ensure_logged_in", return_value=True) as sso, \
+             patch.object(p, "_dump_cookies_to_headers_file") as saved, \
+             patch.object(p, "capture_and_download_cool_videos_in_page", return_value=p.StageStats(done=1)):
+            stats = p.capture_and_download_cool_videos(plan, course_id="1", headers_path=headers,
+                                                       profile_dir=self.root / "profile", headless=headless)
+        launches = [c.kwargs["headless"] for c in pw.chromium.launch_persistent_context.call_args_list]
+        ctx = pw.chromium.launch_persistent_context.return_value
+        return stats, launches, ctx, sso, saved
+
+    def test_cool_video_reuses_saved_login_without_a_window(self):
+        stats, launches, ctx, sso, saved = self._cool_video_browser(alive=True)
+        self.assertEqual(launches, [True])
+        ctx.add_cookies.assert_called_once_with(
+            [{"name": "_normandy_session", "value": "s", "domain": "cool.ntu.edu.tw", "path": "/", "secure": True}])
+        sso.assert_not_called()
+        saved.assert_called_once()
+        self.assertEqual(stats.done, 1)
+
+    def test_cool_video_opens_window_only_when_saved_login_expired(self):
+        stats, launches, _, sso, saved = self._cool_video_browser(alive=False)
+        self.assertEqual(launches, [True, False])
+        sso.assert_called_once()
+        saved.assert_called_once()
+        self.assertEqual(stats.done, 1)
+
+    def test_cool_video_headless_never_opens_window(self):
+        stats, launches, _, sso, _ = self._cool_video_browser(alive=False, headless=True)
+        self.assertEqual(launches, [True])
+        sso.assert_not_called()
+        self.assertEqual(len(stats.failed), 1)
+
     def test_pre_manifest_files_are_adopted_not_downloaded_again(self):
         items = [{"id": i, "content_id": i, "type": "File", "title": title}
                  for i, title in ((1, "Kept.pdf"), (2, "Stale.pdf"))]

@@ -279,7 +279,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Download every PDF, Page, YouTube link and NTU CDN video for a course.",
     )
     course.add_argument("--course-id", required=True, help="Canvas course id (e.g. 60804).")
-    course.add_argument("--headless", action="store_true", help="Run any required video browser without a visible window; requires saved login.")
+    course.add_argument("--headless", action="store_true", help="Never open a visible browser window; fail instead of asking to log in when the saved login has expired.")
     course.add_argument("--out", default=None,
                         help="Output directory. Default: ~/Documents/ntu-cool-gcm_material "
                              "(or ./ntu-cool-gcm_material if you already have one there).")
@@ -778,9 +778,9 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     # The visible browser is only needed to complete SSO and export the Canvas
     # cookies. Normal course/file downloads use the saved headers, so close the
     # NTU COOL window as soon as the course list proves that login succeeded.
-    # A course containing cool-video items can open the same persistent profile
-    # again later for the LTI capture step without asking the user to keep this
-    # login page around.
+    # Its cookies are session-only and die with this window, but they were
+    # saved with the headers file; the cool-video step re-injects them into an
+    # invisible browser, so the user isn't asked to log in again.
     if browser is not None:
         _close_completed_login(browser)
         browser = None
