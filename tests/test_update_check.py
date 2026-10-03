@@ -199,5 +199,26 @@ class YtDlpUpdateTests(unittest.TestCase):
                     self.assertIn("yt-dlp -U", msg)
 
 
+class ResolveYtDlpTests(unittest.TestCase):
+    def test_finds_launcher_in_scripts_dir_when_not_on_path(self) -> None:
+        import os
+        import sys
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            name = "yt-dlp.exe" if os.name == "nt" else "yt-dlp"
+            launcher = Path(tmp) / name
+            launcher.write_text("")
+            launcher.chmod(0o755)
+            with mock.patch.dict(os.environ, {"PATH": ""}), \
+                 mock.patch.object(update_check.sysconfig, "get_path", return_value=tmp):
+                found = update_check.resolve_yt_dlp()
+            self.assertIsNotNone(found, sys.platform)
+            self.assertEqual(Path(found).resolve(), launcher.resolve())
+
+    def test_explicit_missing_path_is_not_guessed(self) -> None:
+        self.assertIsNone(update_check.resolve_yt_dlp(str(Path("no-such-dir") / "yt-dlp")))
+
+
 if __name__ == "__main__":
     unittest.main()

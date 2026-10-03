@@ -13,15 +13,10 @@ from ntu_cool_materials.canvas_client import CanvasAPIError, SessionExpiredError
 from ntu_cool_materials.cli import _build_parser
 from ntu_cool_materials.storage import course_directory_name
 
-from ntu_cool_materials.announcements import announcement_markdown, html_to_text
+from ntu_cool_materials.announcements import announcement_markdown
 
 
 class AnnouncementTests(unittest.TestCase):
-    def test_html_to_text_keeps_readable_lines(self) -> None:
-        value = "<p>Hello <strong>class</strong></p><ul><li>Read chapter 1</li></ul>"
-
-        self.assertEqual(html_to_text(value), "Hello class\nRead chapter 1")
-
     def test_announcement_markdown_includes_metadata(self) -> None:
         markdown = announcement_markdown(
             {

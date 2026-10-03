@@ -90,6 +90,26 @@ class SecretsDirTests(unittest.TestCase):
             self.assertTrue(args.youtube_cookies.startswith(base), args.youtube_cookies)
 
 
+class ParentShellTests(unittest.TestCase):
+    """Quitting `pick` closes the terminal by killing its shell. Anything else
+    (Windows Terminal, explorer.exe) must never be the target."""
+
+    def test_console_script_shim_closes_the_shell_above_it(self) -> None:
+        procs = {10: (5, "ntu-cool-gcm.exe"), 5: (2, "powershell.exe"), 2: (1, "windowsterminal.exe")}
+        self.assertEqual(cli._find_parent_shell(10, procs.get), 5)
+
+    def test_python_dash_m_closes_the_shell_itself(self) -> None:
+        procs = {5: (2, "pwsh.exe"), 2: (1, "explorer.exe")}
+        self.assertEqual(cli._find_parent_shell(5, procs.get), 5)
+
+    def test_never_targets_terminal_host_or_explorer(self) -> None:
+        procs = {7: (3, "code.exe"), 3: (2, "explorer.exe"), 2: (1, "windowsterminal.exe")}
+        self.assertIsNone(cli._find_parent_shell(7, procs.get))
+
+    def test_unknown_process_is_left_alone(self) -> None:
+        self.assertIsNone(cli._find_parent_shell(7, {}.get))
+
+
 class LoginBrowserLifetimeTests(unittest.TestCase):
     def test_completed_login_closes_visible_browser(self) -> None:
         browser = mock.MagicMock()

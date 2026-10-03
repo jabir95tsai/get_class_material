@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
 
+from .i18n import t
 from .spinner import spinner
 from .storage import hide_file, sanitize_component, sha256_file
 
@@ -63,12 +64,13 @@ def validate_notebook_url(value: str) -> str:
         parsed = urlsplit(value.strip())
         port = parsed.port
     except ValueError as exc:
-        raise NotebookLMError("NotebookLM 網址格式不正確。") from exc
+        raise NotebookLMError(t("NotebookLM 網址格式不正確。", "Malformed NotebookLM URL.")) from exc
     if (parsed.scheme != "https" or parsed.hostname not in
             {"notebooklm.google.com", "notebook.google.com"}
             or parsed.username or parsed.password or port
             or not re.fullmatch(r"/notebook/[A-Za-z0-9_-]+/?", parsed.path)):
-        raise NotebookLMError("請提供 NotebookLM 筆記本的 https 網址（/notebook/…）。")
+        raise NotebookLMError(t("請提供 NotebookLM 筆記本的 https 網址（/notebook/…）。",
+                                "Give the https URL of a NotebookLM notebook (/notebook/…)."))
     # Strip tracking/account query strings; never persist authentication URLs.
     return f"https://{parsed.hostname}{parsed.path.rstrip('/')}"
 
@@ -81,13 +83,15 @@ def strip_legacy_hash(title: str) -> str:
 def build_import_plan(course_dir: Path, *, include_media: bool = True) -> ImportPlan:
     root = course_dir.expanduser().resolve()
     if not root.is_dir():
-        raise NotebookLMError("教材資料夾不存在；請指定一門課的資料夾。")
+        raise NotebookLMError(t("教材資料夾不存在；請指定一門課的資料夾。",
+                                "The materials folder doesn't exist; point at one course's folder."))
     plan = ImportPlan(root)
     allowed = DOCUMENT_TYPES | (MEDIA_TYPES if include_media else set())
     seen: set[str] = set()
     used_titles: set[str] = set()
     def fail_scan(exc):
-        raise NotebookLMError("無法讀取教材資料夾，請檢查檔案存取權。") from exc
+        raise NotebookLMError(t("無法讀取教材資料夾，請檢查檔案存取權。",
+                                "Can't read the materials folder; check file permissions.")) from exc
 
     for directory, dirs, files in os.walk(root, followlinks=False, onerror=fail_scan):
         dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d != "metadata"
@@ -100,20 +104,21 @@ def build_import_plan(course_dir: Path, *, include_media: bool = True) -> Import
             if name.startswith(".") or relative == "course_overview.md":
                 continue
             if path.is_symlink() or not path.resolve().is_relative_to(root):
-                plan.skipped.append((relative, "連結檔案"))
+                plan.skipped.append((relative, t("連結檔案", "link")))
                 continue
             if path.suffix.lower() not in allowed:
-                reason = ("已用 --notebooklm-no-media 略過影音檔"
-                          if path.suffix.lower() in MEDIA_TYPES else "NotebookLM 不支援的格式")
+                reason = (t("已用 --notebooklm-no-media 略過影音檔", "media skipped by --notebooklm-no-media")
+                          if path.suffix.lower() in MEDIA_TYPES
+                          else t("NotebookLM 不支援的格式", "format NotebookLM doesn't support"))
                 plan.skipped.append((relative, reason))
                 continue
             size = path.stat().st_size
             if not size or size > MAX_FILE_BYTES:
-                plan.skipped.append((relative, "空檔案或超過 200 MB"))
+                plan.skipped.append((relative, t("空檔案或超過 200 MB", "empty or over 200 MB")))
                 continue
             digest = sha256_file(path)
             if digest in seen:
-                plan.skipped.append((relative, "內容相同"))
+                plan.skipped.append((relative, t("內容相同", "duplicate content")))
                 continue
             seen.add(digest)
             parts = Path(relative).with_suffix("").parts
@@ -154,7 +159,8 @@ def _read_state(path: Path) -> dict:
             validate_notebook_url(state["default_url"])
         return state
     except (ValueError, TypeError, AttributeError) as exc:
-        raise NotebookLMError("匯入紀錄格式損壞；請先檢查 .notebooklm-import.json，避免重複上傳。") from exc
+        raise NotebookLMError(t("匯入紀錄格式損壞；請先檢查 .notebooklm-import.json，避免重複上傳。",
+                                "The import record is corrupt; check .notebooklm-import.json first to avoid duplicate uploads.")) from exc
 
 
 def _save_state(path: Path, state: dict) -> None:
@@ -177,7 +183,9 @@ def _import_lock(root: Path):
     try:
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError as exc:
-        raise NotebookLMError("此課程已有匯入工作或遺留鎖；確認沒有匯入程式後，才移除 .notebooklm-import.lock。") from exc
+        raise NotebookLMError(t("此課程已有匯入工作或遺留鎖；確認沒有匯入程式後，才移除 .notebooklm-import.lock。",
+                                "Another import is running for this course, or a stale lock was left; only remove "
+                                ".notebooklm-import.lock once you're sure no import is running.")) from exc
     try:
         os.close(fd)
         yield
@@ -188,7 +196,7 @@ def _import_lock(root: Path):
 def import_plan(plan: ImportPlan, adapter: NotebookAdapter, *, notebook_url: str | None = None,
                 max_sources: int = 50) -> ImportResult:
     if max_sources < 1:
-        raise NotebookLMError("來源上限必須大於零。")
+        raise NotebookLMError(t("來源上限必須大於零。", "The source limit must be greater than zero."))
     if not plan.sources:
         return ImportResult()
     if notebook_url:
@@ -211,9 +219,12 @@ def import_plan(plan: ImportPlan, adapter: NotebookAdapter, *, notebook_url: str
                 record[source.digest] = {"title": title, "status": "complete"}
                 result.unchanged += 1
             elif previous and previous.get("status") == "pending":
-                raise NotebookLMError(
+                raise NotebookLMError(t(
                     f"先前上傳結果不明：{source.relative_path}。請在筆記本確認來源是否處理完成；"
-                    "不會自動重送。若已確定不存在，才刪除紀錄中對應的 pending 項目後重試。")
+                    "不會自動重送。若已確定不存在，才刪除紀錄中對應的 pending 項目後重試。",
+                    f"An earlier upload of {source.relative_path} has an unknown result. Check the notebook; "
+                    "it won't be re-sent automatically. Only if it's definitely missing, delete its pending "
+                    "entry from the record and retry."))
             elif source.title in ready:
                 old_digests = [d for d, entry in record.items() if entry.get("title") == source.title and d != source.digest]
                 if old_digests:
@@ -232,8 +243,10 @@ def import_plan(plan: ImportPlan, adapter: NotebookAdapter, *, notebook_url: str
                 pending.append(source)
         _save_state(path, state)
         if adapter.source_count() + len(pending) > max_sources:
-            raise NotebookLMError("來源數將超過設定上限。請改用另一個筆記本／較小的教材資料夾，"
-                                  "或依帳號方案提高 --notebooklm-max-sources。")
+            raise NotebookLMError(t("來源數將超過設定上限。請改用另一個筆記本／較小的教材資料夾，"
+                                    "或依帳號方案提高 --notebooklm-max-sources。",
+                                    "This would exceed the source limit. Use another notebook or a smaller "
+                                    "folder, or raise --notebooklm-max-sources to match your plan."))
         for source in pending:
             # Stage an immutable snapshot with a deterministic, collision-resistant name.
             with tempfile.TemporaryDirectory(prefix=".notebooklm-upload-", dir=plan.root) as tmp:
@@ -241,16 +254,19 @@ def import_plan(plan: ImportPlan, adapter: NotebookAdapter, *, notebook_url: str
                 staged = Path(tmp) / staged_name
                 shutil.copyfile(source.path, staged)
                 if sha256_file(staged) != source.digest:
-                    raise NotebookLMError(f"檔案已變動，請重新執行：{source.relative_path}")
+                    raise NotebookLMError(t(f"檔案已變動，請重新執行：{source.relative_path}",
+                                            f"File changed; run again: {source.relative_path}"))
                 record[source.digest] = {"title": source.title, "status": "pending"}
                 _save_state(path, state)
                 try:
-                    with spinner(f"  上傳中 {source.relative_path}"):
+                    with spinner(t(f"  上傳中 {source.relative_path}", f"  Uploading {source.relative_path}")):
                         adapter.upload(staged, source.title)
                 except Exception as exc:
                     # Do not include transport exception text: it may contain session URLs.
-                    raise NotebookLMError(f"上傳尚未確認完成：{source.relative_path}。"
-                                          "已保留 pending 紀錄，請檢查 NotebookLM 後再執行。") from exc
+                    raise NotebookLMError(t(f"上傳尚未確認完成：{source.relative_path}。"
+                                            "已保留 pending 紀錄，請檢查 NotebookLM 後再執行。",
+                                            f"Upload not confirmed: {source.relative_path}. The pending "
+                                            "record was kept; check NotebookLM, then run again.")) from exc
                 record[source.digest]["status"] = "complete"
                 _save_state(path, state)
                 result.uploaded += 1

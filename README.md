@@ -220,8 +220,10 @@ ntu-cool-gcm
 第一次跑會花幾分鐘,因為它會幫你裝幾個額外的東西:
 
 - **Chromium 瀏覽器**(讓工具能幫你登入,大約 200MB)
-- **ffmpeg**(合併 YouTube 影片用,大約 240MB,Windows 用 `winget` 自動裝)
-- **Node.js**(處理 YouTube 影片用,Windows 用 `winget` 自動裝)
+- **ffmpeg**(合併 YouTube 影片用,大約 240MB,Windows 用 `winget` 安裝)
+- **Node.js**(處理 YouTube 影片用,Windows 用 `winget` 安裝)
+
+ffmpeg 和 Node.js 只有下載 YouTube 影片才需要,所以工具會先問你 `要現在自動安裝嗎? [Y/n]`,直接按 Enter 就是安裝。選 `n` 的話 30 天內不會再問,PDF / Page / 上課影片照常下載;之後想裝隨時可以跑 `ntu-cool-materials doctor --fix`。
 
 > 如果跳出「使用者帳戶控制」要求權限,點「是」(因為 winget 在裝系統工具)。
 
@@ -396,7 +398,7 @@ ntu-cool-gcm --out D:\我的課程
 
 ### Word / PowerPoint / Excel / Zip 等非 PDF 檔
 
-預設會**全部下載**，並先查詢 Canvas 檔案資料，保留原本的副檔名，包括 Word、PowerPoint、Excel、Zip、圖片、影片及程式碼檔案。`--all-file-types` 保留供舊指令相容使用。若來源完全沒有副檔名，仍沿用 `.pdf` 備援命名。
+預設會**全部下載**，並先查詢 Canvas 檔案資料，保留原本的副檔名，包括 Word、PowerPoint、Excel、Zip、圖片、影片及程式碼檔案。若來源完全沒有副檔名，仍沿用 `.pdf` 備援命名。
 
 ### 增量更新、檢查完整性與下載速度
 
@@ -611,7 +613,7 @@ NTU 上課影片(cool-video)畫質維持來源原檔。
 
 ### `.secrets/` 資料夾
 
-工具會在你執行的目錄下建一個 `.secrets/` 資料夾,裡面存:
+工具會把登入資料存在 `~/.ntu-cool-gcm/.secrets/`(Windows 是 `C:\Users\<你的帳號>\.ntu-cool-gcm\.secrets\`;如果你執行的目錄下本來就有 `.secrets/`,會沿用那一個),裡面存:
 - 你登入後的 cookie(等同於登入狀態)
 - YouTube 的 cookie
 
@@ -670,7 +672,7 @@ python -m unittest discover -s tests
 - GitHub: <https://github.com/jabir95tsai/get_class_material>
 - License: MIT — 見 [LICENSE](LICENSE)
 
-支援的 Python 版本:3.11+。Playwright + yt-dlp + ffmpeg + Node.js 為下載 YouTube 影片所需,工具會在第一次執行時嘗試自動安裝。
+支援的 Python 版本:3.11+。Playwright + yt-dlp + ffmpeg + Node.js 為下載 YouTube 影片所需;第一次執行時必要項目(Playwright Chromium、yt-dlp)會自動安裝,ffmpeg / Node.js 會先詢問。
 
 </details>
 

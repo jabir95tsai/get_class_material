@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .storage import atomic_write_text
 
-DEFAULT_PROFILE_DIR = ".secrets/ntu_cool_browser_profile"
-DEFAULT_HEADERS_FILE = ".secrets/ntu_cool_headers.txt"
+
 DEFAULT_BASE_URL = "https://cool.ntu.edu.tw"
 
 
@@ -49,8 +50,8 @@ def refresh_headers_file(
     *,
     course_id: str | None,
     base_url: str = DEFAULT_BASE_URL,
-    profile_dir: Path = Path(DEFAULT_PROFILE_DIR),
-    headers_path: Path = Path(DEFAULT_HEADERS_FILE),
+    profile_dir: Path,
+    headers_path: Path,
     headless: bool = False,
     timeout_ms: int = 120_000,
 ) -> BrowserSessionResult:
@@ -118,6 +119,10 @@ def refresh_headers_file(
                 + "\n",
                 encoding="utf-8",
             )
+            # The full jar lets the cool-video stage resume this login in an
+            # invisible browser (Canvas session cookies die with the window).
+            from .course_pipeline import _storage_state_path
+            atomic_write_text(_storage_state_path(headers_path), json.dumps({"cookies": context.cookies()}))
             return BrowserSessionResult(headers_path=headers_path, logged_in=True, current_url=page.url)
         finally:
             context.close()
@@ -145,8 +150,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--course-id", default=None, help="Canvas course id to open while refreshing session.")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="NTU COOL base URL.")
-    parser.add_argument("--profile-dir", default=DEFAULT_PROFILE_DIR, help="Persistent browser profile directory.")
-    parser.add_argument("--headers-file", default=DEFAULT_HEADERS_FILE, help="Headers output path.")
+    # Same home-anchored location as the main CLI, so `pick` sees this login.
+    from .cli import _secrets_dir
+    secrets = _secrets_dir()
+    parser.add_argument("--profile-dir", default=str(secrets / "ntu_cool_browser_profile"),
+                        help="Persistent browser profile directory.")
+    parser.add_argument("--headers-file", default=str(secrets / "ntu_cool_headers.txt"), help="Headers output path.")
     parser.add_argument("--headless", action="store_true", help="Do not show the browser window.")
     parser.add_argument("--timeout-ms", type=int, default=120_000, help="Login wait timeout.")
     return parser
