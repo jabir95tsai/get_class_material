@@ -1,168 +1,60 @@
 # NTU COOL Get Class Material
 
-> **一行指令,把 NTU COOL 整門課PDF、上課簡報、上課影片下載下來。**
+[![PyPI](https://img.shields.io/pypi/v/get-class-material)](https://pypi.org/project/get-class-material/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-## 如何使用
+> **一行指令,把 NTU COOL 整門課的講義、簡報、公告、上課影片全部下載到電腦,方便丟給 AI 複習。**
+>
+> One command to download an entire NTU COOL course — slides, PDFs, pages, announcements and lecture videos — for AI-assisted studying.
 
-開啟powershell,輸入以下指令:
+## ⚡ 30 秒快速開始
+
+需要 **Windows + Python 3.11 以上**(還沒裝 Python?看 [新手完整教學](#新手完整教學))。開啟 PowerShell,輸入:
 
 ```powershell
 pip install get-class-material
 ntu-cool-gcm
 ```
 
-## 自動匯入個人版 NotebookLM（實驗功能）
+接著:
 
-透過非官方 `notebooklm-py` API 匯入（固定測試版本 `0.8.3`），這是唯一的匯入方式。
+1. 跳出瀏覽器 → 用**台大帳號**登入 NTU COOL(密碼只輸入在官方登入頁,程式看不到)
+2. 從清單輸入課程編號(例如 `3`,或 `1 3 5` 多選、`a` 全部)
+3. 等它跑完 → 檔案在「文件」資料夾的 `ntu-cool-gcm_material\<課程名稱>\`
 
-**Windows 原始碼安裝：**雙擊 `Install-NotebookLM.cmd`，首次再執行 `Login-NotebookLM.cmd`，自行在獨立 Chrome 視窗登入 Google。完成後雙擊 `Start-NotebookLM.cmd` 選課匯入。已登入過的本機設定檔會直接沿用。
+之後再跑一次 `ntu-cool-gcm`,**只會補抓新增的教材**,已下載的自動跳過。
 
-其他環境可在同一 Python 環境安裝及登入：
+## 📦 會下載什麼
 
-```sh
-python -m pip install ".[notebooklm]"
-notebooklm login
-ntu-cool-materials notebooklm
-```
+| 類型 | 內容 | 存成 |
+|---|---|---|
+| 📄 講義與附件 | PDF、PPT、Word、Excel、Zip… | 原始檔(保留副檔名) |
+| 📝 Page 頁面 | 老師寫在 COOL 頁面的文字 | `.md` |
+| 📢 課程公告 | 全部公告全文 | `announcements/announcements.md` |
+| ▶️ YouTube 影片 | 課程裡連到的 YouTube | `.mp4`(中文標題) |
+| 🎥 上課錄影 | NTU cool-video | `.mp4` |
+| 🗂 課程索引 | 每週有什麼、檔案在哪 | `course_overview.md` |
 
-登入狀態由 `notebooklm-py` 保存在本機。Windows 啟動器使用專案的 `.secrets/notebooklm-api`；CLI 可用 `NOTEBOOKLM_HOME` 或 `--notebooklm-storage` 指定。不要提交或分享登入檔案。程式不會從日常 Chrome 擷取 Cookie；登入失效時請重新執行登入程式。
+依週次自動分資料夾(`week1/`、`week2/`…)。可選擇[一鍵匯入 NotebookLM](#自動匯入個人版-notebooklm實驗功能)。
 
-舊版的擴充套件（`--extension`）、自動化瀏覽器（`--browser`）與手動上傳資料夾（`--manual`）已移除。沒有安裝 `notebooklm-py` 時，`ntu-cool-gcm` 下載完成後不會詢問匯入，只會提示一次安裝指令；明確加 `--notebooklm` 則會顯示安裝方式並回傳失敗。
+## 📚 目錄
 
-成功使用本機 API 登入後，會將登入檔的絕對路徑記錄在 `~/.ntu-cool-gcm/notebooklm-storage.json`（只記錄位置，不複製憑證），之後從其他目錄啟動 `gcm` 也能沿用。明確指定的登入參數及目前目錄的登入設定仍優先；刪除這個位置紀錄即可取消跨目錄沿用。
-
-### CMD 無點擊流程
-
-在專案目錄執行（登入狀態有效時，不需點擊瀏覽器）：
-
-```bat
-rem 下載指定課程，完成後直接 API 匯入
-Download-and-Import.cmd --course-id 60804
-
-rem 僅匯入已下載教材
-Start-NotebookLM.cmd --course-id 60804
-
-rem 僅核對遠端，不上傳
-Start-NotebookLM.cmd --course-id 60804 --verify-only
-```
-
-指定 ID 後不顯示選課或筆記本選單：已有課程對應就重用，否則以課程名稱新建筆記本。可加 `--notebooklm-url` 指定自己的筆記本。命令完成後直接回到 CMD，以退出碼回報成功或失敗，不會停在「按任意鍵」。下載命令使用背景瀏覽器處理需要瀏覽器的影片，停用互動重試；登入失效時需另外完成登入。未帶課程參數的 `Start-NotebookLM.cmd` 仍提供互動選課。
-
-### 互動選課流程
-
-1. 執行 `ntu-cool-gcm`，用自己的台大帳號登入、選課下載。
-2. 下載完成後回答「要將這門課匯入 NotebookLM 嗎？」；預設否，下載不會自動把教材送到 Google。
-3. 回答 `y` 就直接開始 API 匯入：沿用此課程已記錄的筆記本，首次則以課程名稱自動建立。不再選筆記本或二次確認。
-4. 終端機顯示匯入結果與筆記本連結。缺少或過期的登入會提示重新登入；上傳失敗時教材仍會保留。
-
-一般 `gcm` 指令也會沿用目前目錄 `.secrets`（不存在時使用家目錄 `.ntu-cool-gcm/.secrets`）內的 `notebooklm-api` API 登入。明確指定 `--notebooklm-storage` 或 SDK 的 `NOTEBOOKLM_HOME`／`NOTEBOOKLM_PROFILE`／`NOTEBOOKLM_AUTH_JSON` 時，以指定設定為準。若都沒有本機登入則使用 SDK 的預設設定檔。API 功能需在執行 `gcm` 的同一 Python 環境安裝 `get-class-material[notebooklm]`。
-
-已有教材的使用者只要執行 `ntu-cool-materials notebooklm`，就能從預設下載目錄選課，
-也可輸入其他資料夾路徑。每位使用者使用自己的帳號與本機設定檔，不需要維護者的 Google 帳號、API key 或 Codex。
-`--no-notebooklm` 可略過下載後的詢問；管線／非互動模式不會自動詢問。
-匯入訊息預設是中文，`notebooklm`、`download-course`、`ntu-cool-gcm` 都可加 `--lang en` 改成英文。
-
-```powershell
-# 開啟既有教材匯入引導 / Guided course picker
-ntu-cool-materials notebooklm
-
-# 指定資料夾，仍顯示引導 / Guided import for a given folder
-ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --guide
-
-# 選課、下載後，自動匯入 NotebookLM / Download, then import
-ntu-cool-gcm --notebooklm
-
-# 指定單一課程 / One course
-ntu-cool-materials download-course --course-id 60804 --notebooklm
-
-# 已下載教材：先列出候選來源，不登入、不上傳 / Local preview only
-ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --dry-run
-
-# 核對 API 遠端來源與本機紀錄，禁止上傳或建立筆記本 / Remote read-only check
-ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --verify-only
-
-# 匯入同一個資料夾 / Import an existing course folder
-ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)"
-
-# 改用你已建立的筆記本 / Use an existing notebook
-ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --notebooklm-url "https://notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID"
-```
-
-每個課程資料夾首次直接匯入會以課程名稱建立筆記本；之後依課程根目錄的
-`.notebooklm-import.json` 重用。也可用 `--notebooklm-url` 指定你擁有的筆記本。
-互動引導會顯示目標並要求確認；尚無對應時可從自己的筆記本清單選擇或新增。
-在多選課程時指定同一個 URL，會將這些課程都匯入該筆記本。
-
-- 預設匯入 PDF、TXT、Markdown、DOCX、PPTX、CSV、EPUB，以及 MP3、WAV、M4A、MP4、AAC、OGG、OPUS 影音檔；略過 JSON、metadata、
-  隱藏資料夾、目錄摘要、空檔案、連結檔案與超過 200 MB 的檔案。
-- NotebookLM 不支援 Excel：下載完成與匯入前，會用 [markitdown](https://github.com/microsoft/markitdown)
-  把每個 `.xlsx`／`.xls` 轉成旁邊的 `<檔名>.xlsx.md`（每個工作表一個表格），匯入的是這份 Markdown。
-  原始 Excel 不會被修改；公式只保留計算結果，圖表與圖片會遺失。`[notebooklm]` 已內含轉換工具，
-  只想轉檔可單獨安裝：
-
-  ```powershell
-  python -m pip install "get-class-material[excel]"
-  ```
-- 不想匯入影音檔可加 `--notebooklm-no-media`。每個影音檔各佔一個來源名額。
-  影音依 NotebookLM 的音訊來源處理，**不保證理解影片畫面**；此版本不轉碼、不切割超大檔案，
-  也不直接匯入 YouTube URL。
-- 來源數預設上限為 50（含筆記本現有來源）。付費個人方案可依實際額度設定
-  `--notebooklm-max-sources 100` 等值；這只調整本機檢查，不會提高 Google 帳號額度。
-  超過上限會停止；請指定較小的週次資料夾或另一個筆記本。
-- 使用 SHA-256 比對內容。來源名稱為「週次 - 檔名」；不同週的同名講義仍可區分，名稱重複時加上 (2)、(3)。
-  檔案內容變更後會新增來源並保留遠端舊版本；不會刪除或覆寫遠端來源。
-- 上傳前先記錄 `pending`，只有來源清單顯示已可使用才記錄 `complete`。
-  逾時或中斷後，重跑會先確認遠端來源；無法確認時停止，不自動重送。
-  若確定來源不存在，才移除 `.notebooklm-import.json` 中對應的 `pending` 項目後重試。
-  程式異常退出若遺留 `.notebooklm-import.lock`，確認沒有匯入程式執行後再移除該鎖。
-- `--dry-run` 只檢查本機候選檔案，不會讀取遠端來源、驗證登入或預估遠端去重結果。
-  NotebookLM 仍會檢查每來源字數、檔案內容、方案額度及其他限制。
-- `--verify-only` 需先登入，只讀取既有目標的來源狀態並核對本機紀錄，不建立筆記本、不上傳、不改写匯入紀錄；來源缺少時回傳失敗。
-
-API 模式使用**非官方 Google 個人版介面**，不是 Enterprise 官方 API；Google 更新可能導致失效。上傳後會依來源 ID、檔名及 READY 狀態再次核對，保留既有去重與 pending 保護。處理中的同名來源會先等待，狀態不明或失敗則停止，避免重複上傳。
-教材下載完成後即使匯入失敗，本機教材仍會保留；畫面會印出可直接重試的 `ntu-cool-materials notebooklm --course-dir …` 指令。
-僅匯入你有權上傳至 Google 的教材。
-
-維護者發佈前應用全新的設定檔驗證 Google 登入、首次上傳、重跑去重及中斷恢復。
-單元測試和打包檢查不代表通過 Google 實站驗證；此功能通過實站測試前保留「實驗」標示。
-
-來源：[Google 支援格式與限制](https://support.google.com/gemininotebook/answer/16215270)。
-
-## 怎麼更新到最新版
-
-**不確定要不要更新?** 直接跑這行就對了 —— 已經是最新版的話它什麼都不會做,不會弄壞任何東西:
-
-```powershell
-pip install --upgrade get-class-material
-```
-
-> 就是安裝指令多加 `--upgrade`。建議偶爾跑一次拿最新修正。
-> (工具啟動時會自動提醒你有沒有新版;如果你還在 0.2.18 以前的舊版,看不到提醒是正常的 —— 跑上面那行更新一次就會開始有提醒了。)
->
-> **從 0.2.x 升到 1.0 要注意:** 舊的 `--all-file-types`、`--notebooklm-include-media`、`notebooklm --api` 已移除(它們本來就沒有作用),指令裡有的話刪掉即可。完整變更見 [Releases](https://github.com/jabir95tsai/get_class_material/releases)。
-
----
-
-## 這個工具是什麼
-
-期中期末考前,你想把整學期的講義跟錄影影片整理一份在本機,丟給 AI 幫你做摘要、複習、出考古題?
-
-這個工具會自動:
-
-1. 用你自己的台大帳號登入 NTU COOL(只在瀏覽器登入頁輸入密碼,程式不會看到)
-2. 把你選的課程整門搬下來:**講義與附件(PDF、PPT、Word、Excel…)、Page 文字內容、課程公告、YouTube 連結影片、NTU 上課錄影**
-
-之後你可以:
-- 直接拖 PDF 到 ChatGPT / Gemini 問問題
-- 一鍵匯入個人版 NotebookLM(見上方「自動匯入個人版 NotebookLM」),或把 `.md` 手動丟進去做筆記
+- [新手完整教學](#新手完整教學)(從安裝 Python 開始)
+- [你會拿到什麼](#你會拿到什麼) · [下載後怎麼給 AI 用](#下載後怎麼給-ai-用)
+- [常見任務](#常見任務)(更新版本、只抓 PDF、換存檔位置…)
+- [自動匯入個人版 NotebookLM](#自動匯入個人版-notebooklm實驗功能)
+- [常見問題](#常見問題) · [安全與隱私](#安全與隱私提醒) · [進階指令與開發者](#進階其他指令)
 
 ## 誰適合用
 
-- 台大學生,有自己 NTU COOL 帳號,想要把整門課的教材下載卻不想一個一個檔案手動下載
+台大學生,有自己的 NTU COOL 帳號,想把整門課的教材一次下載,不想一個一個點。期中期末前把整學期講義跟錄影整理在本機,丟給 ChatGPT / Gemini / Claude / NotebookLM 做摘要、複習、出題。
+
+> ⚖️ 只會下載**你本來就有權限看到**的教材;下載的內容仍受版權保護,**僅限個人學習,請勿公開散播**。
 
 ---
 
-## 新手使用完整教學
+## 新手完整教學
 
 ### 第 1 步 — 確認你有沒有 Python
 
@@ -370,6 +262,18 @@ C:\Users\你\Documents\ntu-cool-gcm_material\
 
 ## 常見任務
 
+### 更新到最新版
+
+**不確定要不要更新?** 直接跑這行就對了 —— 已經是最新版的話它什麼都不會做,不會弄壞任何東西:
+
+```powershell
+pip install --upgrade get-class-material
+```
+
+> 工具啟動時會自動提醒你有沒有新版;如果你還在 0.2.18 以前的舊版,看不到提醒是正常的 —— 跑上面那行更新一次就會開始有提醒了。
+>
+> **從 0.2.x 升到 1.0 要注意:** 舊的 `--all-file-types`、`--notebooklm-include-media`、`notebooklm --api` 已移除(它們本來就沒有作用),指令裡有的話刪掉即可。完整變更見 [Releases](https://github.com/jabir95tsai/get_class_material/releases)。
+
 ### 之後再跑一次
 
 ```powershell
@@ -496,17 +400,151 @@ ntu-cool-gcm --version
 
 ---
 
+## 自動匯入個人版 NotebookLM(實驗功能)
+
+下載完成後,可以把整門課一鍵匯入你自己的 [NotebookLM](https://notebooklm.google.com/) 筆記本。**預設不會匯入**,下載完會先問你。
+
+最簡單的用法:
+
+```powershell
+pip install "get-class-material[notebooklm]"
+notebooklm login          # 第一次:在跳出的 Chrome 視窗登入 Google
+ntu-cool-gcm --notebooklm # 選課、下載,完成後直接匯入
+```
+
+已經下載過的課程,執行 `ntu-cool-materials notebooklm` 就能從清單選課匯入。
+
+<details>
+<summary>完整說明(安裝方式、CMD 流程、來源上限、去重與中斷恢復…)</summary>
+
+透過非官方 `notebooklm-py` API 匯入（固定測試版本 `0.8.3`），這是唯一的匯入方式。
+
+**Windows 原始碼安裝：**雙擊 `Install-NotebookLM.cmd`，首次再執行 `Login-NotebookLM.cmd`，自行在獨立 Chrome 視窗登入 Google。完成後雙擊 `Start-NotebookLM.cmd` 選課匯入。已登入過的本機設定檔會直接沿用。
+
+其他環境可在同一 Python 環境安裝及登入：
+
+```sh
+python -m pip install ".[notebooklm]"
+notebooklm login
+ntu-cool-materials notebooklm
+```
+
+登入狀態由 `notebooklm-py` 保存在本機。Windows 啟動器使用專案的 `.secrets/notebooklm-api`；CLI 可用 `NOTEBOOKLM_HOME` 或 `--notebooklm-storage` 指定。不要提交或分享登入檔案。程式不會從日常 Chrome 擷取 Cookie；登入失效時請重新執行登入程式。
+
+舊版的擴充套件（`--extension`）、自動化瀏覽器（`--browser`）與手動上傳資料夾（`--manual`）已移除。沒有安裝 `notebooklm-py` 時，`ntu-cool-gcm` 下載完成後不會詢問匯入，只會提示一次安裝指令；明確加 `--notebooklm` 則會顯示安裝方式並回傳失敗。
+
+成功使用本機 API 登入後，會將登入檔的絕對路徑記錄在 `~/.ntu-cool-gcm/notebooklm-storage.json`（只記錄位置，不複製憑證），之後從其他目錄啟動 `gcm` 也能沿用。明確指定的登入參數及目前目錄的登入設定仍優先；刪除這個位置紀錄即可取消跨目錄沿用。
+
+### CMD 無點擊流程
+
+在專案目錄執行（登入狀態有效時，不需點擊瀏覽器）：
+
+```bat
+rem 下載指定課程，完成後直接 API 匯入
+Download-and-Import.cmd --course-id 60804
+
+rem 僅匯入已下載教材
+Start-NotebookLM.cmd --course-id 60804
+
+rem 僅核對遠端，不上傳
+Start-NotebookLM.cmd --course-id 60804 --verify-only
+```
+
+指定 ID 後不顯示選課或筆記本選單：已有課程對應就重用，否則以課程名稱新建筆記本。可加 `--notebooklm-url` 指定自己的筆記本。命令完成後直接回到 CMD，以退出碼回報成功或失敗，不會停在「按任意鍵」。下載命令使用背景瀏覽器處理需要瀏覽器的影片，停用互動重試；登入失效時需另外完成登入。未帶課程參數的 `Start-NotebookLM.cmd` 仍提供互動選課。
+
+### 互動選課流程
+
+1. 執行 `ntu-cool-gcm`，用自己的台大帳號登入、選課下載。
+2. 下載完成後回答「要將這門課匯入 NotebookLM 嗎？」；預設否，下載不會自動把教材送到 Google。
+3. 回答 `y` 就直接開始 API 匯入：沿用此課程已記錄的筆記本，首次則以課程名稱自動建立。不再選筆記本或二次確認。
+4. 終端機顯示匯入結果與筆記本連結。缺少或過期的登入會提示重新登入；上傳失敗時教材仍會保留。
+
+一般 `gcm` 指令也會沿用目前目錄 `.secrets`（不存在時使用家目錄 `.ntu-cool-gcm/.secrets`）內的 `notebooklm-api` API 登入。明確指定 `--notebooklm-storage` 或 SDK 的 `NOTEBOOKLM_HOME`／`NOTEBOOKLM_PROFILE`／`NOTEBOOKLM_AUTH_JSON` 時，以指定設定為準。若都沒有本機登入則使用 SDK 的預設設定檔。API 功能需在執行 `gcm` 的同一 Python 環境安裝 `get-class-material[notebooklm]`。
+
+已有教材的使用者只要執行 `ntu-cool-materials notebooklm`，就能從預設下載目錄選課，
+也可輸入其他資料夾路徑。每位使用者使用自己的帳號與本機設定檔，不需要維護者的 Google 帳號、API key 或 Codex。
+`--no-notebooklm` 可略過下載後的詢問；管線／非互動模式不會自動詢問。
+匯入訊息預設是中文，`notebooklm`、`download-course`、`ntu-cool-gcm` 都可加 `--lang en` 改成英文。
+
+```powershell
+# 開啟既有教材匯入引導 / Guided course picker
+ntu-cool-materials notebooklm
+
+# 指定資料夾，仍顯示引導 / Guided import for a given folder
+ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --guide
+
+# 選課、下載後，自動匯入 NotebookLM / Download, then import
+ntu-cool-gcm --notebooklm
+
+# 指定單一課程 / One course
+ntu-cool-materials download-course --course-id 60804 --notebooklm
+
+# 已下載教材：先列出候選來源，不登入、不上傳 / Local preview only
+ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --dry-run
+
+# 核對 API 遠端來源與本機紀錄，禁止上傳或建立筆記本 / Remote read-only check
+ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --verify-only
+
+# 匯入同一個資料夾 / Import an existing course folder
+ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)"
+
+# 改用你已建立的筆記本 / Use an existing notebook
+ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --notebooklm-url "https://notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID"
+```
+
+每個課程資料夾首次直接匯入會以課程名稱建立筆記本；之後依課程根目錄的
+`.notebooklm-import.json` 重用。也可用 `--notebooklm-url` 指定你擁有的筆記本。
+互動引導會顯示目標並要求確認；尚無對應時可從自己的筆記本清單選擇或新增。
+在多選課程時指定同一個 URL，會將這些課程都匯入該筆記本。
+
+- 預設匯入 PDF、TXT、Markdown、DOCX、PPTX、CSV、EPUB，以及 MP3、WAV、M4A、MP4、AAC、OGG、OPUS 影音檔；略過 JSON、metadata、
+  隱藏資料夾、目錄摘要、空檔案、連結檔案與超過 200 MB 的檔案。
+- NotebookLM 不支援 Excel：下載完成與匯入前，會用 [markitdown](https://github.com/microsoft/markitdown)
+  把每個 `.xlsx`／`.xls` 轉成旁邊的 `<檔名>.xlsx.md`（每個工作表一個表格），匯入的是這份 Markdown。
+  原始 Excel 不會被修改；公式只保留計算結果，圖表與圖片會遺失。`[notebooklm]` 已內含轉換工具，
+  只想轉檔可單獨安裝：
+
+  ```powershell
+  python -m pip install "get-class-material[excel]"
+  ```
+- 不想匯入影音檔可加 `--notebooklm-no-media`。每個影音檔各佔一個來源名額。
+  影音依 NotebookLM 的音訊來源處理，**不保證理解影片畫面**；此版本不轉碼、不切割超大檔案，
+  也不直接匯入 YouTube URL。
+- 來源數預設上限為 50（含筆記本現有來源）。付費個人方案可依實際額度設定
+  `--notebooklm-max-sources 100` 等值；這只調整本機檢查，不會提高 Google 帳號額度。
+  超過上限會停止；請指定較小的週次資料夾或另一個筆記本。
+- 使用 SHA-256 比對內容。來源名稱為「週次 - 檔名」；不同週的同名講義仍可區分，名稱重複時加上 (2)、(3)。
+  檔案內容變更後會新增來源並保留遠端舊版本；不會刪除或覆寫遠端來源。
+- 上傳前先記錄 `pending`，只有來源清單顯示已可使用才記錄 `complete`。
+  逾時或中斷後，重跑會先確認遠端來源；無法確認時停止，不自動重送。
+  若確定來源不存在，才移除 `.notebooklm-import.json` 中對應的 `pending` 項目後重試。
+  程式異常退出若遺留 `.notebooklm-import.lock`，確認沒有匯入程式執行後再移除該鎖。
+- `--dry-run` 只檢查本機候選檔案，不會讀取遠端來源、驗證登入或預估遠端去重結果。
+  NotebookLM 仍會檢查每來源字數、檔案內容、方案額度及其他限制。
+- `--verify-only` 需先登入，只讀取既有目標的來源狀態並核對本機紀錄，不建立筆記本、不上傳、不改写匯入紀錄；來源缺少時回傳失敗。
+
+API 模式使用**非官方 Google 個人版介面**，不是 Enterprise 官方 API；Google 更新可能導致失效。上傳後會依來源 ID、檔名及 READY 狀態再次核對，保留既有去重與 pending 保護。處理中的同名來源會先等待，狀態不明或失敗則停止，避免重複上傳。
+教材下載完成後即使匯入失敗，本機教材仍會保留；畫面會印出可直接重試的 `ntu-cool-materials notebooklm --course-dir …` 指令。
+僅匯入你有權上傳至 Google 的教材。
+
+維護者發佈前應用全新的設定檔驗證 Google 登入、首次上傳、重跑去重及中斷恢復。
+單元測試和打包檢查不代表通過 Google 實站驗證；此功能通過實站測試前保留「實驗」標示。
+
+來源：[Google 支援格式與限制](https://support.google.com/gemininotebook/answer/16215270)。
+
+</details>
+
+---
+
 ## 常見問題
 
 ### Q: 怎麼更新到最新版?
-
-在 PowerShell 跑這行:
 
 ```powershell
 pip install --upgrade get-class-material
 ```
 
-已經是最新版的話它不會做任何事,所以隨時都可以放心跑。想確認自己現在哪一版,打 `ntu-cool-gcm --version`。
+已經是最新版的話它不會做任何事,隨時都可以放心跑。想確認自己現在哪一版,打 `ntu-cool-gcm --version`。
 
 ### Q: 輸入 `python --version` 顯示「無法辨識」/「找不到」
 
@@ -690,6 +728,3 @@ python -m unittest discover -s tests
 支援的 Python 版本:3.11+。Playwright + yt-dlp + ffmpeg + Node.js 為下載 YouTube 影片所需;第一次執行時必要項目(Playwright Chromium、yt-dlp)會自動安裝,ffmpeg / Node.js 會先詢問。
 
 </details>
-
-
-
