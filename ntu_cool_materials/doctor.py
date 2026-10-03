@@ -763,14 +763,21 @@ def ensure_ready(
             for c in manual:
                 print(f"  • {c.name}: {c.fix_command}")
             return False
-        print(t(f"\n自動安裝 {len(missing_blocking)} 個項目...\n",
-                f"\nInstalling {len(missing_blocking)} item(s) automatically...\n"))
-        for c in missing_blocking:
-            print(f"  → {c.name}")
-            c.auto_install()
-            print()
-        still = [c for c in _all_checks(headers_path, youtube_cookies_path)
-                 if not c.ok and c.name in BLOCKING_NAMES]
+        # Installing one item can reveal the next blocker (the Playwright
+        # package, then its Chromium), so keep going until nothing new can be
+        # auto-installed. Each item is tried once, so a failing installer can't loop.
+        attempted: set[str] = set()
+        still = missing_blocking
+        while installable := [c for c in still if c.auto_install is not None and c.name not in attempted]:
+            print(t(f"\n自動安裝 {len(installable)} 個項目...\n",
+                    f"\nInstalling {len(installable)} item(s) automatically...\n"))
+            for c in installable:
+                attempted.add(c.name)
+                print(f"  → {c.name}")
+                c.auto_install()
+                print()
+            still = [c for c in _all_checks(headers_path, youtube_cookies_path)
+                     if not c.ok and c.name in BLOCKING_NAMES]
         if still:
             print(t("自動安裝後必要項目仍有問題:\n", "Required items still failing after auto-install:\n"))
             for c in still:

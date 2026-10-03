@@ -490,6 +490,37 @@ class PipelineTests(unittest.TestCase):
         pending, skipped = p._pending_cool_videos(plan)
         self.assertEqual((pending, skipped), ([], 1))
 
+    def test_private_youtube_backed_cool_video_retries_with_browser_login(self):
+        plan = self.plan([{"id": 1, "type": "ExternalTool", "title": "A",
+                           "external_url": "https://cool-video.dlc.ntu.edu.tw/courses/1/videos/2"}])
+        view = {"videoId": 2, "sourceUri": "https://www.youtube.com/watch?v=OxGcm2y3zaE"}
+        commands = []
+
+        def fake_yt_dlp(cmd, timeout):
+            commands.append(cmd)
+            if "--cookies-from-browser" in cmd:  # only the signed-in retry can see a private video
+                cache = Path(cmd[cmd.index("-P") + 1])
+                (cache / "OxGcm2y3zaE.mp4").write_bytes(b"\0\0\0\x18ftypmp42 video")
+
+        with patch.object(p, "plan_course", return_value=plan), \
+             patch.object(p, "capture_and_download_cool_videos",
+                          side_effect=lambda plan, **kw: p.capture_and_download_cool_videos_in_page(
+                              plan, Mock(), {}, course_id="1", yt_dlp=kw["yt_dlp"], yt_cookies=kw["yt_cookies"])), \
+             patch.object(p, "_capture_cool_video_in_page", return_value=view), \
+             patch.object(p.shutil, "which", side_effect=lambda name, path=None: "ffmpeg" if name == "ffmpeg" else None), \
+             patch.object(p.subprocess, "run", side_effect=fake_yt_dlp), \
+             patch.object(p, "_installed_cookie_browsers", return_value=["firefox"]), \
+             patch.object(p, "maybe_retry_youtube_with_login", return_value=True) as asked:
+            result = p.download_course(course_id="1", output_dir=self.root, client=self.client,
+                                       yt_cookies=self.root / "none.txt", skip_announcements=True,
+                                       skip_pdfs=True, skip_pages=True, skip_youtube=True)
+        asked.assert_called_once()
+        self.assertEqual(asked.call_args.args[1], 1)
+        self.assertEqual(commands[-1][commands[-1].index("--cookies-from-browser") + 1], "firefox")
+        stats = result.stats.cool_videos
+        self.assertEqual((stats.done, stats.failed, stats.youtube_retry), (1, [], []))
+        self.assertTrue(result.stats.successful)
+
     def test_login_cookie_jar_round_trips_for_reuse(self):
         headers = self.root / "secrets" / "ntu_cool_headers.txt"
         context = Mock()

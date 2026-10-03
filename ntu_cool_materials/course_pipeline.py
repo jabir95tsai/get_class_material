@@ -94,6 +94,8 @@ class StageStats:
     skipped: int = 0
     failed: list[str] = field(default_factory=list)  # human labels of failed items
     disabled: bool = False
+    # Cool-videos that wrap a YouTube upload and failed: (youtube_id, key, target, version, failure label).
+    youtube_retry: list[tuple[str, str, Path, str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -946,7 +948,8 @@ def _pending_cool_videos(plan):
 
 
 def _download_youtube_backed_video(plan: CoursePlan, youtube_id: str, target: Path, *,
-                                   yt_dlp: str, yt_cookies: Path | None) -> None:
+                                   yt_dlp: str, yt_cookies: Path | None,
+                                   cookies_from_browser: str | None = None) -> None:
     """Some cool-video entries only wrap a YouTube upload (sourceUri is a
     watch page, no altSourceUri); fetching that URL returns YouTube's HTML."""
     if shutil.which("ffmpeg") is None:
@@ -956,7 +959,10 @@ def _download_youtube_backed_video(plan: CoursePlan, youtube_id: str, target: Pa
     source = cache / f"{youtube_id}.mp4"
     if not _valid_video(source):
         source.unlink(missing_ok=True)
-        cookie_args = _youtube_cookie_args(yt_cookies, None) if yt_cookies else []
+        if yt_cookies is not None:
+            cookie_args = _youtube_cookie_args(yt_cookies, cookies_from_browser)
+        else:
+            cookie_args = ["--cookies-from-browser", cookies_from_browser] if cookies_from_browser else []
         cmd = [yt_dlp, *cookie_args, *YT_DLP_BASE_ARGS, "--socket-timeout", "30", "--remux-video", "mp4",
                "-P", str(cache), "-o", "%(id)s.%(ext)s", f"https://youtu.be/{youtube_id}"]
         try:
@@ -993,8 +999,16 @@ def capture_and_download_cool_videos_in_page(plan: CoursePlan, page, captured: d
                         raise DownloadError("Video has no download source")
                     youtube_ids = extract_youtube_ids(url)
                     if youtube_ids:
-                        _download_youtube_backed_video(plan, youtube_ids[0], target,
-                                                       yt_dlp=yt_dlp, yt_cookies=yt_cookies)
+                        try:
+                            _download_youtube_backed_video(plan, youtube_ids[0], target,
+                                                           yt_dlp=yt_dlp, yt_cookies=yt_cookies)
+                        except DownloadError as exc:
+                            message = f"{target.name}: {type(exc).__name__}: {exc}"
+                            stats.failed.append(message)
+                            # A private / members-only upload may still work with the
+                            # browser's YouTube login: see retry_youtube_backed_cool_videos.
+                            stats.youtube_retry.append((youtube_ids[0], key, target, version, message))
+                            break
                         store.record_artifact(key, target, version)
                         stats.done += 1
                         break
@@ -1013,6 +1027,34 @@ def capture_and_download_cool_videos_in_page(plan: CoursePlan, page, captured: d
                     stats.failed.append(f"{target.name}: {type(exc).__name__}: {exc}")
                     break
     return stats
+
+
+def retry_youtube_backed_cool_videos(plan: CoursePlan, stats: StageStats, *, yt_dlp: str,
+                                     yt_cookies: Path | None, browsers: list[str]) -> int:
+    """Retry cool-videos that wrap a YouTube upload with each browser's YouTube
+    login, like the YouTube stage does. No Canvas page is needed: the YouTube
+    id was captured on the first pass. Returns how many were recovered."""
+    recovered = 0
+    with _manifest(plan) as store:
+        for browser_name in browsers:
+            if not stats.youtube_retry:
+                break
+            print(t(f"\n  → 用 {browser_name} 裡已登入的 YouTube 帳號重試上課影片...",
+                    f"\n  → retrying cool-videos using your {browser_name} YouTube login..."))
+            remaining = []
+            for youtube_id, key, target, version, message in stats.youtube_retry:
+                try:
+                    _download_youtube_backed_video(plan, youtube_id, target, yt_dlp=yt_dlp,
+                                                   yt_cookies=yt_cookies, cookies_from_browser=browser_name)
+                except DownloadError:
+                    remaining.append((youtube_id, key, target, version, message))
+                    continue
+                store.record_artifact(key, target, version)
+                stats.done += 1
+                stats.failed.remove(message)
+                recovered += 1
+            stats.youtube_retry = remaining
+    return recovered
 
 
 def make_cool_video_response_handler(captured: dict[int, dict[str, Any]]):
@@ -1309,6 +1351,9 @@ def download_course(
             yt_cookies = _secrets_dir() / "youtube_cookies.txt"
         from .update_check import resolve_yt_dlp
         yt_dlp = resolve_yt_dlp(yt_dlp) or yt_dlp
+        # Set once the user agrees to the browser-login retry, so the cool-video
+        # stage reuses that answer instead of asking twice.
+        youtube_login_consent = False
 
         if not skip_youtube:
             print(t("\n[4/5] YouTube 影片", "\n[4/5] YouTube videos"))
@@ -1356,7 +1401,8 @@ def download_course(
                     course_stats.youtube.done += retry_stats.done
                     course_stats.youtube.failed = retry_stats.failed
                     failed_count = len(course_stats.youtube.failed)
-            if retryable and maybe_retry_youtube_with_login(yt_cookies_path, failed_count):
+            youtube_login_consent = retryable and maybe_retry_youtube_with_login(yt_cookies_path, failed_count)
+            if youtube_login_consent:
                 # Retry the still-missing videos using the YouTube login from
                 # the user's normal browser(s). We try each installed browser
                 # in turn and stop as soon as nothing's left failing — the
@@ -1419,6 +1465,16 @@ def download_course(
                 # as a stage failure so the rest of the course still finishes.
                 course_stats.cool_videos.failed.append(f"cool-video: {type(exc).__name__}: {exc}")
                 print(t(f"  ✗ 上課影片階段失敗: {exc}", f"  ✗ cool-video stage failed: {exc}"))
+            # Cool-videos that are really private / members-only YouTube uploads
+            # get the same browser-login retry as the YouTube stage.
+            youtube_backed = course_stats.cool_videos.youtube_retry
+            if youtube_backed and shutil.which("ffmpeg") is not None and (
+                    youtube_login_consent or maybe_retry_youtube_with_login(yt_cookies, len(youtube_backed))):
+                recovered = retry_youtube_backed_cool_videos(
+                    plan, course_stats.cool_videos, yt_dlp=yt_dlp, yt_cookies=yt_cookies,
+                    browsers=_installed_cookie_browsers())
+                if recovered:
+                    print(t(f"  ✓ 重試救回 {recovered} 個上課影片", f"  ✓ retry recovered {recovered} cool-video(s)"))
 
         # Per-course overview at the course root.
         try:
