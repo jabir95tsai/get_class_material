@@ -77,7 +77,7 @@ def strip_legacy_hash(title: str) -> str:
     return re.sub(r" \[[0-9a-fA-F]{8,64}\](?=\.[^.]+$|$)", "", title)
 
 
-def build_import_plan(course_dir: Path, *, include_media: bool = False) -> ImportPlan:
+def build_import_plan(course_dir: Path, *, include_media: bool = True) -> ImportPlan:
     root = course_dir.expanduser().resolve()
     if not root.is_dir():
         raise NotebookLMError("教材資料夾不存在；請指定一門課的資料夾。")
@@ -102,7 +102,9 @@ def build_import_plan(course_dir: Path, *, include_media: bool = False) -> Impor
                 plan.skipped.append((relative, "連結檔案"))
                 continue
             if path.suffix.lower() not in allowed:
-                plan.skipped.append((relative, "未啟用的媒體或不支援的格式"))
+                reason = ("已用 --notebooklm-no-media 略過影音檔"
+                          if path.suffix.lower() in MEDIA_TYPES else "NotebookLM 不支援的格式")
+                plan.skipped.append((relative, reason))
                 continue
             size = path.stat().st_size
             if not size or size > MAX_FILE_BYTES:

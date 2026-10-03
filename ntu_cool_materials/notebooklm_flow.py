@@ -20,7 +20,7 @@ def choose(prompt: str, choices: set[str], default: str) -> str:
 
 
 def guided_import(course_dir: Path, *, notebook_url: str | None = None,
-                  include_media: bool = False, max_sources: int = 50,
+                  include_media: bool = True, max_sources: int = 50,
                   storage_path: Path | None = None) -> int:
     if not console.stdin_is_interactive():
         raise NotebookLMError("互動引導需要終端機。自動化請傳入 --course-dir 與明確參數；預覽可加 --dry-run。")

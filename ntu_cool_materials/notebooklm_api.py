@@ -306,7 +306,7 @@ class NotebookLMAPIAdapter:
 
 
 def run_api_import(course_dir: Path, *, notebook_url: str | None = None,
-                   include_media: bool = False, max_sources: int = 50,
+                   include_media: bool = True, max_sources: int = 50,
                    dry_run: bool = False, storage_path: Path | None = None,
                    interactive: bool = False, verify_only: bool = False) -> ImportResult:
     if max_sources < 1:

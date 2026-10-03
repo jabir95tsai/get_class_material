@@ -92,7 +92,7 @@ ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --no
 互動引導會顯示目標並要求確認；尚無對應時可從自己的筆記本清單選擇或新增。
 在多選課程時指定同一個 URL，會將這些課程都匯入該筆記本。
 
-- 預設匯入 PDF、TXT、Markdown、DOCX、PPTX、CSV、EPUB；略過 JSON、metadata、
+- 預設匯入 PDF、TXT、Markdown、DOCX、PPTX、CSV、EPUB，以及 MP3、WAV、M4A、MP4、AAC、OGG、OPUS 影音檔；略過 JSON、metadata、
   隱藏資料夾、目錄摘要、空檔案、連結檔案與超過 200 MB 的檔案。
 - NotebookLM 不支援 Excel：下載完成與匯入前，會用 [markitdown](https://github.com/microsoft/markitdown)
   把每個 `.xlsx`／`.xls` 轉成旁邊的 `<檔名>.xlsx.md`（每個工作表一個表格），匯入的是這份 Markdown。
@@ -102,7 +102,7 @@ ntu-cool-materials notebooklm --course-dir "C:\教材\課程名稱 (60804)" --no
   ```powershell
   python -m pip install "get-class-material[excel]"
   ```
-- 使用 `--notebooklm-include-media` 可加入 MP3、WAV、M4A、MP4、AAC、OGG、OPUS。
+- 不想匯入影音檔可加 `--notebooklm-no-media`。每個影音檔各佔一個來源名額。
   影音依 NotebookLM 的音訊來源處理，**不保證理解影片畫面**；此版本不轉碼、不切割超大檔案，
   也不直接匯入 YouTube URL。
 - 來源數預設上限為 50（含筆記本現有來源）。付費個人方案可依實際額度設定

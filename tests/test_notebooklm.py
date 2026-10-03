@@ -85,11 +85,20 @@ class NotebookLMTests(unittest.TestCase):
         for title in titles:
             self.assertNotRegex(title, r"\[[0-9a-fA-F]{8,64}\]")
 
-    def test_media_requires_opt_in_and_empty_files_are_skipped(self):
+    def test_media_included_by_default_and_empty_files_are_skipped(self):
         self.file("week1/video.mp4")
         self.file("week1/empty.pdf", b"")
-        self.assertEqual(len(build_import_plan(self.root).sources), 0)
-        self.assertEqual(len(build_import_plan(self.root, include_media=True).sources), 1)
+        self.assertEqual(len(build_import_plan(self.root).sources), 1)
+        plan = build_import_plan(self.root, include_media=False)
+        self.assertEqual(len(plan.sources), 0)
+        self.assertIn("--notebooklm-no-media", dict(plan.skipped)["week1/video.mp4"])
+
+    def test_cli_media_flags(self):
+        from ntu_cool_materials.cli import _build_parser
+        parser = _build_parser()
+        for argv, expected in ((["pick"], True), (["pick", "--notebooklm-no-media"], False),
+                               (["pick", "--notebooklm-include-media"], True)):
+            self.assertIs(parser.parse_args(argv).notebooklm_include_media, expected)
 
     def test_large_files_are_not_hashed_or_uploaded(self):
         self.file(content=b"12345")

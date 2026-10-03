@@ -333,7 +333,13 @@ def _build_parser() -> argparse.ArgumentParser:
                             help="Existing notebook URL; otherwise reuse the course mapping or create a notebook.")
         target.add_argument("--notebooklm-storage", default=None,
                             help="API storage_state.json path; otherwise use NOTEBOOKLM_HOME / notebooklm profile settings.")
-        target.add_argument("--notebooklm-include-media", action="store_true", help="Also import supported local audio/video files.")
+        media = target.add_mutually_exclusive_group()
+        media.add_argument("--notebooklm-no-media", dest="notebooklm_include_media", action="store_false",
+                           help="Skip local audio/video files (imported by default).")
+        # Media is on by default now; kept so existing commands keep working.
+        media.add_argument("--notebooklm-include-media", dest="notebooklm_include_media", action="store_true",
+                           help=argparse.SUPPRESS)
+        target.set_defaults(notebooklm_include_media=True)
         target.add_argument("--notebooklm-max-sources", type=int, default=50,
                             help="Total sources per notebook allowed by your plan (default: 50).")
 
