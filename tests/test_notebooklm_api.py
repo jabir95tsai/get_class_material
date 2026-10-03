@@ -72,7 +72,7 @@ class FakeAPI:
 class StorageTests(unittest.TestCase):
     def test_remembered_login_works_from_another_directory(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True):
-            root = Path(folder)
+            root = Path(folder).resolve()
             login = root / "project/storage_state.json"
             login.parent.mkdir()
             login.write_text("synthetic-secret")
@@ -91,7 +91,7 @@ class StorageTests(unittest.TestCase):
 
     def test_existing_launcher_login_and_explicit_overrides(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True):
-            root = Path(folder)
+            root = Path(folder).resolve()
             login = root / ".secrets/notebooklm-api/profiles/default/storage_state.json"
             login.parent.mkdir(parents=True)
             login.write_text("{}")
@@ -106,7 +106,7 @@ class StorageTests(unittest.TestCase):
 
     def test_home_fallback_and_sdk_default(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True):
-            root = Path(folder)
+            root = Path(folder).resolve()
             with patch("ntu_cool_materials.cli._secrets_dir", return_value=root / ".ntu-cool-gcm/.secrets"), \
                  patch("ntu_cool_materials.notebooklm_api.Path.home", return_value=root):
                 self.assertIsNone(resolve_api_storage())

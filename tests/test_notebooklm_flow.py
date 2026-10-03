@@ -24,7 +24,7 @@ class PublicFlowTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         for i in range(3):
             (self.root / f"lecture{i}.md").write_text(f"Lecture {i}", encoding="utf-8")
         self.output = io.StringIO()
