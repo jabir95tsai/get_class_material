@@ -8,22 +8,14 @@
 >
 > One command to download an entire NTU COOL course — slides, PDFs, pages, announcements and lecture videos — for AI-assisted studying.
 
-## ⚡ 30 秒快速開始
+## ⚡ 快速開始
 
-需要 **Windows + Python 3.11 以上**(還沒裝 Python?看 [新手完整教學](#新手完整教學))。開啟 PowerShell,輸入:
+工具列搜尋 PowerShell 並開啟,輸入:
 
 ```powershell
 pip install get-class-material
 ntu-cool-gcm
 ```
-
-接著:
-
-1. 跳出瀏覽器 → 用**台大帳號**登入 NTU COOL(密碼只輸入在官方登入頁,程式看不到)
-2. 從清單輸入課程編號(例如 `3`,或 `1 3 5` 多選、`a` 全部)
-3. 等它跑完 → 檔案在「文件」資料夾的 `ntu-cool-gcm_material\<課程名稱>\`
-
-之後再跑一次 `ntu-cool-gcm`,**只會補抓新增的教材**,已下載的自動跳過。
 
 ## 📦 會下載什麼
 
@@ -33,24 +25,18 @@ ntu-cool-gcm
 | 📝 Page 頁面 | 老師寫在 COOL 頁面的文字 | `.md` |
 | 📢 課程公告 | 全部公告全文 | `announcements/announcements.md` |
 | ▶️ YouTube 影片 | 課程裡連到的 YouTube | `.mp4`(中文標題) |
-| 🎥 上課錄影 | NTU cool-video | `.mp4` |
+| 🎥 上課錄影 | NTU COOL video | `.mp4` |
 | 🗂 課程索引 | 每週有什麼、檔案在哪 | `course_overview.md` |
 
 依週次自動分資料夾(`week1/`、`week2/`…)。可選擇[一鍵匯入 NotebookLM](#自動匯入個人版-notebooklm實驗功能)。
 
 ## 📚 目錄
 
-- [新手完整教學](#新手完整教學)(從安裝 Python 開始)
+- [新手完整教學](#新手完整教學)
 - [你會拿到什麼](#你會拿到什麼) · [下載後怎麼給 AI 用](#下載後怎麼給-ai-用)
-- [常見任務](#常見任務)(更新版本、只抓 PDF、換存檔位置…)
+- [常見任務](#常見任務)
 - [自動匯入個人版 NotebookLM](#自動匯入個人版-notebooklm實驗功能)
 - [常見問題](#常見問題) · [安全與隱私](#安全與隱私提醒) · [進階指令與開發者](#進階其他指令)
-
-## 誰適合用
-
-台大學生,有自己的 NTU COOL 帳號,想把整門課的教材一次下載,不想一個一個點。期中期末前把整學期講義跟錄影整理在本機,丟給 ChatGPT / Gemini / Claude / NotebookLM 做摘要、複習、出題。
-
-> ⚖️ 只會下載**你本來就有權限看到**的教材;下載的內容仍受版權保護,**僅限個人學習,請勿公開散播**。
 
 ---
 
