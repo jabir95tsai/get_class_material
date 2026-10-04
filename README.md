@@ -16,6 +16,11 @@
 pip install get-class-material
 ntu-cool-gcm
 ```
+### 更新到最新版
+
+```powershell
+pip install --upgrade get-class-material
+```
 
 ## 📦 會下載什麼
 
@@ -247,26 +252,6 @@ C:\Users\你\Documents\ntu-cool-gcm_material\
 ---
 
 ## 常見任務
-
-### 更新到最新版
-
-**不確定要不要更新?** 直接跑這行就對了 —— 已經是最新版的話它什麼都不會做,不會弄壞任何東西:
-
-```powershell
-pip install --upgrade get-class-material
-```
-
-> 工具啟動時會自動提醒你有沒有新版;如果你還在 0.2.18 以前的舊版,看不到提醒是正常的 —— 跑上面那行更新一次就會開始有提醒了。
->
-> **從 0.2.x 升到 1.0 要注意:** 舊的 `--all-file-types`、`--notebooklm-include-media`、`notebooklm --api` 已移除(它們本來就沒有作用),指令裡有的話刪掉即可。完整變更見 [Releases](https://github.com/jabir95tsai/get_class_material/releases)。
-
-### 之後再跑一次
-
-```powershell
-ntu-cool-gcm
-```
-
-只要登入沒過期(通常一兩天內),不用任何額外動作。**已經抓過的檔案會自動跳過,只補新增的**。
 
 ### 登入過期了
 
