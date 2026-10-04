@@ -16,7 +16,7 @@
 pip install get-class-material
 ntu-cool-gcm
 ```
-### 更新到最新版
+更新到最新版,輸入:
 
 ```powershell
 pip install --upgrade get-class-material
