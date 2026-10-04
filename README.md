@@ -415,42 +415,40 @@ ntu-cool-gcm --notebooklm # 選課、下載,完成後直接匯入
 已經下載過的課程,執行 `ntu-cool-materials notebooklm` 就能從清單選課匯入。
 
 <details>
-<summary>完整說明(安裝方式、CMD 流程、來源上限、去重與中斷恢復…)</summary>
+<summary>完整說明(安裝方式、CLI 流程、來源上限、去重與中斷恢復…)</summary>
 
 透過非官方 `notebooklm-py` API 匯入（固定測試版本 `0.8.3`），這是唯一的匯入方式。
 
-**Windows 原始碼安裝：**雙擊 `Install-NotebookLM.cmd`，首次再執行 `Login-NotebookLM.cmd`，自行在獨立 Chrome 視窗登入 Google。完成後雙擊 `Start-NotebookLM.cmd` 選課匯入。已登入過的本機設定檔會直接沿用。
-
-其他環境可在同一 Python 環境安裝及登入：
+在同一 Python 環境安裝及登入：
 
 ```sh
-python -m pip install ".[notebooklm]"
+python -m pip install "get-class-material[notebooklm]"
 notebooklm login
 ntu-cool-materials notebooklm
 ```
 
-登入狀態由 `notebooklm-py` 保存在本機。Windows 啟動器使用專案的 `.secrets/notebooklm-api`；CLI 可用 `NOTEBOOKLM_HOME` 或 `--notebooklm-storage` 指定。不要提交或分享登入檔案。程式不會從日常 Chrome 擷取 Cookie；登入失效時請重新執行登入程式。
+登入狀態由 `notebooklm-py` 保存在本機。可用 `NOTEBOOKLM_HOME` 或 `--notebooklm-storage` 指定。不要提交或分享登入檔案。程式不會從日常 Chrome 擷取 Cookie；登入失效時請重新執行登入程式。
 
 舊版的擴充套件（`--extension`）、自動化瀏覽器（`--browser`）與手動上傳資料夾（`--manual`）已移除。沒有安裝 `notebooklm-py` 時，`ntu-cool-gcm` 下載完成後不會詢問匯入，只會提示一次安裝指令；明確加 `--notebooklm` 則會顯示安裝方式並回傳失敗。
 
 成功使用本機 API 登入後，會將登入檔的絕對路徑記錄在 `~/.ntu-cool-gcm/notebooklm-storage.json`（只記錄位置，不複製憑證），之後從其他目錄啟動 `gcm` 也能沿用。明確指定的登入參數及目前目錄的登入設定仍優先；刪除這個位置紀錄即可取消跨目錄沿用。
 
-### CMD 無點擊流程
+### CLI 指定課程流程
 
-在專案目錄執行（登入狀態有效時，不需點擊瀏覽器）：
+登入狀態有效時，可直接指定課程執行：
 
-```bat
-rem 下載指定課程，完成後直接 API 匯入
-Download-and-Import.cmd --course-id 60804
+```sh
+# 下載指定課程，完成後直接 API 匯入
+ntu-cool-materials download-course --course-id 60804 --notebooklm --headless
 
-rem 僅匯入已下載教材
-Start-NotebookLM.cmd --course-id 60804
+# 僅匯入已下載教材
+ntu-cool-materials notebooklm --course-id 60804
 
-rem 僅核對遠端，不上傳
-Start-NotebookLM.cmd --course-id 60804 --verify-only
+# 僅核對遠端，不上傳
+ntu-cool-materials notebooklm --course-id 60804 --verify-only
 ```
 
-指定 ID 後不顯示選課或筆記本選單：已有課程對應就重用，否則以課程名稱新建筆記本。可加 `--notebooklm-url` 指定自己的筆記本。命令完成後直接回到 CMD，以退出碼回報成功或失敗，不會停在「按任意鍵」。下載命令使用背景瀏覽器處理需要瀏覽器的影片，停用互動重試；登入失效時需另外完成登入。未帶課程參數的 `Start-NotebookLM.cmd` 仍提供互動選課。
+指定 ID 後不顯示選課或筆記本選單：已有課程對應就重用，否則以課程名稱新建筆記本。可加 `--notebooklm-url` 指定自己的筆記本。命令完成後回到終端機，以退出碼回報成功或失敗。下載命令使用背景瀏覽器處理需要瀏覽器的影片；若要停用互動提示與重試，請使用非互動的標準輸入（Windows CMD 加 `<nul`，macOS／Linux 加 `</dev/null`）。非互動執行遇到登入失效時，需先執行登入指令再重試。未帶課程參數的 `ntu-cool-materials notebooklm` 仍提供互動選課。
 
 ### 互動選課流程
 

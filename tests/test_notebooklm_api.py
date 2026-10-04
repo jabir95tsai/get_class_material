@@ -89,7 +89,7 @@ class StorageTests(unittest.TestCase):
                 config.write_text("broken")
                 self.assertIsNone(resolve_api_storage())
 
-    def test_existing_launcher_login_and_explicit_overrides(self):
+    def test_existing_local_login_and_explicit_overrides(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True):
             root = Path(folder).resolve()
             login = root / ".secrets/notebooklm-api/profiles/default/storage_state.json"
@@ -212,13 +212,6 @@ class APITests(unittest.TestCase):
              patch('ntu_cool_materials.notebooklm_api.run_api_import') as run:
             self.assertEqual(cli.main(['notebooklm', '--course-id', '64660', '--out', str(self.root)]), 1)
         run.assert_not_called()
-
-    def test_cmd_launchers_forward_arguments_and_never_pause(self):
-        root = Path(__file__).resolve().parents[1]
-        for name in ('Start-NotebookLM.cmd', 'Download-and-Import.cmd'):
-            text = (root / name).read_text(encoding='utf-8')
-            self.assertIn('%*', text)
-            self.assertNotIn('\npause', text)
 
     def test_verify_only_missing_source_cannot_upload_or_write_journal(self):
         with patch('ntu_cool_materials.notebooklm_api.api_client_context', return_value=self.api):

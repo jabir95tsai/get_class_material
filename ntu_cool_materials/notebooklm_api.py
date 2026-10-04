@@ -32,14 +32,11 @@ def install_hint() -> str:
     """How to enable NotebookLM import for the Python that is running now."""
     lines = [f'  "{sys.executable}" -m pip install "get-class-material[notebooklm]"',
              "  notebooklm login"]
-    if os.name == "nt":
-        lines.append(t("  （原始碼資料夾也可雙擊 Install-NotebookLM.cmd，再執行 Login-NotebookLM.cmd）",
-                       "  (from the source folder you can also double-click Install-NotebookLM.cmd, then Login-NotebookLM.cmd)"))
     return "\n".join(lines)
 
 
 def _api_home() -> Path:
-    """The launchers' NOTEBOOKLM_HOME, under the shared secrets location."""
+    """Default API login home under the shared secrets location."""
     from .cli import _secrets_dir
     return _secrets_dir().resolve() / "notebooklm-api"
 
@@ -86,7 +83,7 @@ def remember_api_storage(storage_path: Path) -> None:
 
 
 def resolve_api_storage(storage_path: Path | None = None) -> Path | None:
-    """Reuse launcher login without overriding explicit SDK account settings."""
+    """Reuse saved local login without overriding explicit SDK account settings."""
     if storage_path is not None:
         return storage_path
     if any(os.environ.get(name) for name in (
@@ -144,8 +141,8 @@ class NotebookLMAPIAdapter:
         if (console.stdin_is_interactive() and self.context_factory is api_client_context
                 and trigger_interactive_login(self.storage_path) and self._connect()):
             return self
-        raise NotebookLMError(t("API 登入未就緒或已過期；請先執行 Login-NotebookLM.cmd（或 notebooklm login），再重新匯入。",
-                                "NotebookLM login missing or expired; run Login-NotebookLM.cmd (or notebooklm login), then import again.")) from None
+        raise NotebookLMError(t("API 登入未就緒或已過期；請先執行 notebooklm login，再重新匯入。",
+                                "NotebookLM login missing or expired; run notebooklm login, then import again.")) from None
 
     def _connect(self) -> bool:
         """Open the API client. False on any library failure (auth, network)."""

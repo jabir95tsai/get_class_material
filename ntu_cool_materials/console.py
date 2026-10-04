@@ -9,7 +9,7 @@ def stdin_is_interactive() -> bool:
     """True only for a real terminal.
 
     On Windows `isatty()` is also true for the NUL device, so `command <nul`
-    (used by the CMD launchers to mean "never prompt") would still open login
+    (used by non-interactive commands to mean "never prompt") would still open login
     windows and wait on questions. A console input handle is the reliable test.
     """
     stream = sys.stdin
