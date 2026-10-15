@@ -80,6 +80,13 @@ def strip_legacy_hash(title: str) -> str:
     return re.sub(r" \[[0-9a-fA-F]{8,64}\](?=\.[^.]+$|$)", "", title)
 
 
+def is_announcement_title(title: str) -> bool:
+    """Match only announcement summaries, including names used by older imports."""
+    clean = strip_legacy_hash(title)
+    return bool(re.fullmatch(
+        r"(?:announcements|announcements - announcements)(?: \(\d+\))?(?:\.md)?", clean))
+
+
 def build_import_plan(course_dir: Path, *, include_media: bool = True) -> ImportPlan:
     root = course_dir.expanduser().resolve()
     if not root.is_dir():
@@ -212,9 +219,17 @@ def import_plan(plan: ImportPlan, adapter: NotebookAdapter, *, notebook_url: str
         ready = adapter.ready_titles()
         result = ImportResult(notebook_url=url)
         pending: list[Source] = []
+        replacements: set[str] = set()
         for source in plan.sources:
             previous = record.get(source.digest)
-            if previous and (source.title in ready or previous.get("title") in ready):
+            replace_announcement = (
+                source.relative_path in ("announcements/announcements.md", "announcements.md")
+                and hasattr(adapter, "remove_announcements"))
+            if (replace_announcement and previous and previous.get("status") == "complete"
+                    and adapter.announcement_source_count() > 1):
+                pending.append(source)
+                replacements.add(source.digest)
+            elif previous and (source.title in ready or previous.get("title") in ready):
                 title = source.title if source.title in ready else previous["title"]
                 record[source.digest] = {"title": title, "status": "complete"}
                 result.unchanged += 1
@@ -225,6 +240,9 @@ def import_plan(plan: ImportPlan, adapter: NotebookAdapter, *, notebook_url: str
                     f"An earlier upload of {source.relative_path} has an unknown result. Check the notebook; "
                     "it won't be re-sent automatically. Only if it's definitely missing, delete its pending "
                     "entry from the record and retry."))
+            elif replace_announcement:
+                pending.append(source)
+                replacements.add(source.digest)
             elif source.title in ready:
                 old_digests = [d for d, entry in record.items() if entry.get("title") == source.title and d != source.digest]
                 if old_digests:
@@ -242,7 +260,8 @@ def import_plan(plan: ImportPlan, adapter: NotebookAdapter, *, notebook_url: str
             else:
                 pending.append(source)
         _save_state(path, state)
-        if adapter.source_count() + len(pending) > max_sources:
+        removed_count = adapter.announcement_source_count() if replacements else 0
+        if adapter.source_count() - removed_count + len(pending) > max_sources:
             raise NotebookLMError(t("來源數將超過設定上限。請改用另一個筆記本／較小的教材資料夾，"
                                     "或依帳號方案提高 --notebooklm-max-sources。",
                                     "This would exceed the source limit. Use another notebook or a smaller "
@@ -256,6 +275,13 @@ def import_plan(plan: ImportPlan, adapter: NotebookAdapter, *, notebook_url: str
                 if sha256_file(staged) != source.digest:
                     raise NotebookLMError(t(f"檔案已變動，請重新執行：{source.relative_path}",
                                             f"File changed; run again: {source.relative_path}"))
+                if source.digest in replacements:
+                    adapter.remove_announcements()
+                    # Remove obsolete hashes so reverting content cannot adopt an old version.
+                    for digest in list(record):
+                        if is_announcement_title(record[digest]["title"]):
+                            del record[digest]
+                    _save_state(path, state)
                 record[source.digest] = {"title": source.title, "status": "pending"}
                 _save_state(path, state)
                 try:

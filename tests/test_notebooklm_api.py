@@ -29,10 +29,13 @@ class FakeAPI:
         self.renames = 0
         self.notebooks = SimpleNamespace(list=self.list_notebooks, create=self.create)
         self.sources = SimpleNamespace(list=self.list_sources, add_file=self.add_file,
-                                       wait_until_ready=self.wait, rename=self.rename_source)
+                                       wait_until_ready=self.wait, rename=self.rename_source, delete=self.delete_source)
 
     async def __aenter__(self): return self
     async def __aexit__(self, *args): pass
+
+    async def delete_source(self, notebook_id, source_id):
+        self.rows = [r for r in self.rows if r.id != source_id]
 
     async def rename_source(self, notebook_id, source_id, new_title):
         self.renames += 1
@@ -309,3 +312,82 @@ class APITests(unittest.TestCase):
 
 
 
+
+    def announcement_file(self):
+        path = self.root / "announcements" / "announcements.md"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("first announcement", encoding="utf-8")
+        return path
+
+    def test_updated_announcements_replace_all_old_versions_at_capacity(self):
+        path = self.announcement_file()
+        with patch('ntu_cool_materials.notebooklm_api.api_client_context', return_value=self.api):
+            run_api_import(self.root, notebook_url=URL)
+            self.api.rows.extend([
+                SimpleNamespace(id="old2", title="announcements (2)", status=2),
+                SimpleNamespace(id="old3", title="announcements (3)", status=2),
+                SimpleNamespace(id="attachment", title="announcements - attachments - sample.pdf", status=2),
+            ])
+            path.write_text("updated announcement", encoding="utf-8")
+            result = run_api_import(self.root, max_sources=3)
+            self.assertEqual(result.uploaded, 1)
+            self.assertEqual(sorted(r.title for r in self.api.rows), [
+                "announcements", "announcements - attachments - sample.pdf", "lecture.md"])
+            result = run_api_import(self.root, max_sources=3)
+            self.assertEqual(result.uploaded, 0)
+            # Reverting to earlier content still replaces the current summary.
+            path.write_text("first announcement", encoding="utf-8")
+            self.assertEqual(run_api_import(self.root, max_sources=3).uploaded, 1)
+
+    def test_announcement_delete_failure_prevents_upload(self):
+        (self.root / "lecture.md").unlink()
+        self.announcement_file()
+        self.api.rows.append(SimpleNamespace(id="old", title="announcements", status=2))
+        async def fail_delete(*args):
+            raise RuntimeError("delete failed")
+        self.api.sources.delete = fail_delete
+        with patch('ntu_cool_materials.notebooklm_api.api_client_context', return_value=self.api):
+            with self.assertRaises(NotebookLMError):
+                run_api_import(self.root, notebook_url=URL)
+        self.assertEqual(self.api.uploads, 0)
+
+    def test_announcement_delete_must_be_confirmed(self):
+        (self.root / "lecture.md").unlink()
+        self.announcement_file()
+        self.api.rows.append(SimpleNamespace(id="old", title="announcements (2)", status=2))
+        async def no_delete(*args):
+            pass
+        self.api.sources.delete = no_delete
+        with patch('ntu_cool_materials.notebooklm_api.api_client_context', return_value=self.api):
+            with self.assertRaisesRegex(NotebookLMError, "舊公告"):
+                run_api_import(self.root, notebook_url=URL)
+        self.assertEqual(self.api.uploads, 0)
+
+    def test_readonly_refuses_announcement_deletion(self):
+        self.api.rows.append(SimpleNamespace(id="old", title="announcements", status=2))
+        with self.adapter() as adapter:
+            adapter.read_only = True
+            with self.assertRaises(NotebookLMError):
+                adapter.remove_announcements()
+        self.assertEqual(len(self.api.rows), 1)
+
+    def test_existing_duplicates_cleaned_even_without_content_update(self):
+        self.announcement_file()
+        with patch('ntu_cool_materials.notebooklm_api.api_client_context', return_value=self.api):
+            run_api_import(self.root, notebook_url=URL)
+            self.api.rows.append(SimpleNamespace(id="duplicate", title="announcements (2)", status=2))
+            self.assertEqual(run_api_import(self.root).uploaded, 1)
+        self.assertEqual(sum(r.title.startswith("announcements") for r in self.api.rows), 1)
+
+    def test_failed_announcement_upload_is_not_replayed(self):
+        (self.root / "lecture.md").unlink()
+        self.announcement_file()
+        self.api.rows.append(SimpleNamespace(id="old", title="announcements", status=2))
+        self.api.fail_upload = True
+        with patch('ntu_cool_materials.notebooklm_api.api_client_context', return_value=self.api):
+            with self.assertRaises(NotebookLMError):
+                run_api_import(self.root, notebook_url=URL)
+            with self.assertRaises(NotebookLMError):
+                run_api_import(self.root)
+        self.assertEqual(self.api.uploads, 1)
+        self.assertEqual(self.api.rows, [])

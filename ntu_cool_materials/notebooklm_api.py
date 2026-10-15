@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .notebooklm import (
     ImportPlan, ImportResult, NotebookLMError, build_import_plan, import_plan, validate_notebook_url,
-    STATE_NAME, _read_state,
+    STATE_NAME, _read_state, is_announcement_title,
 )
 from . import console
 from .i18n import t
@@ -272,7 +272,8 @@ class NotebookLMAPIAdapter:
             if renamed_any:
                 rows = self._sources()
         expected = [s for s in rows if s.title in self.expected_titles]
-        if len({s.title for s in expected}) != len(expected):
+        ordinary = [s for s in expected if not is_announcement_title(s.title)]
+        if len({s.title for s in ordinary}) != len(ordinary):
             raise NotebookLMError(t("筆記本有重複的教材檔名，請先核對來源；不會再上傳。",
                                     "The notebook has duplicate source names; check them first. Nothing more will be uploaded."))
         for source in expected:
@@ -289,6 +290,19 @@ class NotebookLMAPIAdapter:
 
     def source_count(self) -> int:
         return len(self._sources())
+
+    def announcement_source_count(self) -> int:
+        return sum(is_announcement_title(s.title or "") for s in self._sources())
+
+    def remove_announcements(self) -> None:
+        if self.read_only:
+            raise NotebookLMError(t("唯讀核對不會刪除來源。", "A read-only check never deletes sources."))
+        for source in self._sources():
+            if is_announcement_title(source.title or ""):
+                self.call(self.client.sources.delete(self.notebook_id, source.id))
+        if self.announcement_source_count():
+            raise NotebookLMError(t("舊公告尚未確認刪除；已停止上傳。",
+                                    "Old announcements are still present; upload stopped."))
 
     def upload(self, path: Path, title: str) -> None:
         if self.read_only:
