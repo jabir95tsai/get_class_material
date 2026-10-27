@@ -13,6 +13,7 @@ injecting `fetch` and `now`.
 from __future__ import annotations
 
 import datetime
+import importlib.util
 import json
 import os
 import re
@@ -144,6 +145,17 @@ def resolve_yt_dlp(yt_dlp: str = "yt-dlp") -> str | None:
     return shutil.which(yt_dlp, path=scripts) if scripts else None
 
 
+def yt_dlp_command(yt_dlp: str = "yt-dlp") -> list[str]:
+    """argv prefix that runs yt-dlp.
+
+    Prefers `python -m yt_dlp` over the pip-generated yt-dlp.exe launcher, which
+    Windows Application Control blocks as unsigned (WinError 4551). A custom
+    executable name/path is respected as-is."""
+    if Path(yt_dlp).stem.lower() == "yt-dlp" and importlib.util.find_spec("yt_dlp"):
+        return [sys.executable, "-m", "yt_dlp"]
+    return [yt_dlp]
+
+
 def get_yt_dlp_version(yt_dlp: str = "yt-dlp") -> str | None:
     """Return the installed yt-dlp version string, or None if unavailable."""
     try:
@@ -193,8 +205,8 @@ def update_yt_dlp(yt_dlp: str = "yt-dlp") -> tuple[bool, str]:
         except Exception:
             pass
 
-    return False, t("更新失敗，請手動執行 pip install --upgrade yt-dlp",
-                    "update failed; run pip install --upgrade yt-dlp manually")
+    return False, t("更新失敗，請手動執行 python -m pip install --upgrade yt-dlp",
+                    "update failed; run python -m pip install --upgrade yt-dlp manually")
 
 
 def confirm_yt_dlp_update(prompt: str, *, input_fn=None) -> bool:
@@ -234,8 +246,8 @@ def ensure_yt_dlp_updated(
         f"  [yt-dlp] 目前版本 ({version}) 已發布 {age} 天，YouTube 下載可能失敗。現在更新嗎？[Y/n]: ",
         f"  [yt-dlp] current version ({version}) is {age} days old; YouTube downloads may fail. Update now? [Y/n]: ",
     )):
-        print(t("  [yt-dlp] 略過更新；可稍後執行 pip install --upgrade yt-dlp",
-                "  [yt-dlp] update skipped; run pip install --upgrade yt-dlp later"))
+        print(t("  [yt-dlp] 略過更新；可稍後執行 python -m pip install --upgrade yt-dlp",
+                "  [yt-dlp] update skipped; run python -m pip install --upgrade yt-dlp later"))
         return False
     ok, msg = update_yt_dlp(yt_dlp)
     print(f"  [yt-dlp] {msg}")

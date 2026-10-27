@@ -199,6 +199,18 @@ class OptionalToolDegradationTests(unittest.TestCase):
         self.assertTrue(result.optional)
         self.assertEqual(result.detail, "ffmpeg version 6.1")
 
+    def test_blocked_node_and_ffmpeg_are_optional_and_not_auto_reinstalled(self) -> None:
+        blocked = (-1, "[WinError 4551] 應用程式控制原則已封鎖此檔案。")
+        with (
+            mock.patch.object(doctor, "_has", return_value=True),
+            mock.patch.object(doctor, "_run", return_value=blocked),
+        ):
+            results = [doctor.check_node(), doctor.check_ffmpeg()]
+        for result in results:
+            self.assertFalse(result.ok)
+            self.assertTrue(result.optional)
+            self.assertIsNone(result.auto_install, "reinstalling can't fix a policy block")
+
     def test_doctor_exits_zero_when_only_optional_tools_unrunnable(self) -> None:
         """The actual smoke-test scenario end-to-end: with node/ffmpeg found
         on PATH but non-runnable, run_doctor must still return 0."""
@@ -209,7 +221,7 @@ class OptionalToolDegradationTests(unittest.TestCase):
             return cmd in {"node", "ffmpeg"}
 
         def fake_run(cmd, timeout=5):
-            if cmd[:1] == ["yt-dlp"]:
+            if cmd[:1] == ["yt-dlp"] or "yt_dlp" in cmd:  # `python -m yt_dlp` when the module is installed
                 return (0, "2026.03.17")
             return (9009, "")  # node/ffmpeg: found but stub, exits non-zero
 

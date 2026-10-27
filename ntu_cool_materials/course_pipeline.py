@@ -44,6 +44,7 @@ from .media_naming import build_video_title_map, extract_youtube_ids, sanitize_t
 from .session_client import DROP_REQUEST_HEADER_NAMES, CanvasSessionClient
 from .spreadsheet_convert import convert_spreadsheets
 from .storage import ManifestStore, atomic_write_text, course_directory_name, hide_dot_entries
+from .update_check import yt_dlp_command
 from .http_io import DownloadError, download as download_http, origin
 from . import console
 
@@ -575,6 +576,24 @@ def maybe_retry_youtube_with_login(
     return answer in {"y", "yes"}
 
 
+def _blocked_by_policy(tool: str) -> bool:
+    """True when `tool` is on PATH but Windows Application Control (WinError 4551) won't run it."""
+    path = shutil.which(tool)
+    if not path:
+        return False
+    try:
+        subprocess.run([path, "-version"], capture_output=True, timeout=10)
+    except OSError as exc:
+        return getattr(exc, "winerror", None) == 4551
+    except subprocess.TimeoutExpired:
+        pass
+    return False
+
+
+def _tool_usable(tool: str) -> bool:
+    return shutil.which(tool) is not None and not _blocked_by_policy(tool)
+
+
 def download_youtube(
     plan: CoursePlan, *, cookies_path: Path, yt_dlp: str = "yt-dlp",
     cookies_from_browser: str | None = None,
@@ -605,24 +624,40 @@ def download_youtube(
                 jobs.setdefault(vid, []).append((key, target))
         if not jobs:
             return stats
-        if shutil.which("ffmpeg") is None:
+        if not _tool_usable("ffmpeg"):
             # Without ffmpeg yt-dlp leaves separate video/audio files it can't merge.
             import platform
             hint = {
                 "Windows": "winget install Gyan.FFmpeg",
                 "Darwin": "brew install ffmpeg",
             }.get(platform.system(), "apt install ffmpeg  (or your distro's equivalent)")
-            print(t(
-                f"  ⚠ 找不到 ffmpeg,無法把 YouTube 的影片與聲音合併成可播放的 mp4。\n"
-                f"     請先安裝: {hint}\n"
-                f"     或執行 `ntu-cool-materials doctor --fix` 嘗試自動安裝。YouTube 階段先跳過。",
-                f"  ⚠ ffmpeg not found; YouTube video and audio can't be merged into a playable mp4.\n"
-                f"     Install it first: {hint}\n"
-                f"     Or run `ntu-cool-materials doctor --fix` to try auto-install. Skipping YouTube.",
-            ))
+            if _blocked_by_policy("ffmpeg"):
+                # Reinstalling won't help; the policy has to allow the file.
+                print(t(
+                    "  ⚠ ffmpeg 被 Windows「應用程式控制原則」封鎖,無法合併 YouTube 影音。\n"
+                    "     請向電腦管理員申請放行 ffmpeg.exe,或改用不受限制的電腦。YouTube 階段先跳過。",
+                    "  ⚠ ffmpeg is blocked by Windows Application Control, so YouTube video and audio can't be merged.\n"
+                    "     Ask your administrator to allow ffmpeg.exe, or use an unrestricted computer. Skipping YouTube.",
+                ))
+            else:
+                print(t(
+                    f"  ⚠ 找不到 ffmpeg,無法把 YouTube 的影片與聲音合併成可播放的 mp4。\n"
+                    f"     請先安裝: {hint}\n"
+                    f"     或執行 `ntu-cool-materials doctor --fix` 嘗試自動安裝。YouTube 階段先跳過。",
+                    f"  ⚠ ffmpeg not found; YouTube video and audio can't be merged into a playable mp4.\n"
+                    f"     Install it first: {hint}\n"
+                    f"     Or run `ntu-cool-materials doctor --fix` to try auto-install. Skipping YouTube.",
+                ))
             stats.failed = [f"YouTube {vid}: ffmpeg is required" for vid in jobs]
             return stats
-        if shutil.which("node") is None:
+        if _blocked_by_policy("node"):
+            print(t(
+                "  ⚠ Node.js 被 Windows「應用程式控制原則」封鎖。yt-dlp 在解 YouTube JS 挑戰時可能會失敗或畫質卡在 360p。\n"
+                "     可向管理員申請放行 node.exe。",
+                "  ⚠ Node.js is blocked by Windows Application Control. yt-dlp may fail YouTube's JS challenge\n"
+                "     or cap quality at 360p. Ask your administrator to allow node.exe.",
+            ))
+        elif shutil.which("node") is None:
             # yt-dlp needs a JS runtime for YouTube's challenge; without it some
             # videos fail or cap at 360p.
             print(t(
@@ -639,9 +674,9 @@ def download_youtube(
             with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as tf:
                 tf.write("\n".join(f"https://youtu.be/{vid}" for vid in missing))
                 urls_file = Path(tf.name)
-            cmd = [yt_dlp, *YT_DLP_BASE_ARGS, "--socket-timeout", "30", "--remux-video", "mp4",
+            cmd = [*yt_dlp_command(yt_dlp), *_youtube_cookie_args(cookies_path, cookies_from_browser),
+                   *YT_DLP_BASE_ARGS, "--socket-timeout", "30", "--remux-video", "mp4",
                    "-P", str(cache), "-o", "%(id)s.%(ext)s", "-a", str(urls_file)]
-            cmd[1:1] = _youtube_cookie_args(cookies_path, cookies_from_browser)
             try:
                 # A prior invalid final file must not make yt-dlp claim "already downloaded".
                 for vid in missing:
@@ -688,7 +723,7 @@ def _valid_video(path: Path) -> bool:
         if b"ftyp" not in stream.read(64):
             return False
     probe = shutil.which("ffprobe")
-    if not probe:
+    if not probe or _blocked_by_policy("ffprobe"):
         return True
     try:
         result = subprocess.run([probe, "-v", "error", "-show_entries", "stream=codec_type:format=duration",
@@ -952,7 +987,7 @@ def _download_youtube_backed_video(plan: CoursePlan, youtube_id: str, target: Pa
                                    cookies_from_browser: str | None = None) -> None:
     """Some cool-video entries only wrap a YouTube upload (sourceUri is a
     watch page, no altSourceUri); fetching that URL returns YouTube's HTML."""
-    if shutil.which("ffmpeg") is None:
+    if not _tool_usable("ffmpeg"):
         raise DownloadError("ffmpeg is required to merge YouTube video and audio")
     cache = plan.course_dir / ".media-cache" / "youtube"
     cache.mkdir(parents=True, exist_ok=True)
@@ -963,7 +998,7 @@ def _download_youtube_backed_video(plan: CoursePlan, youtube_id: str, target: Pa
             cookie_args = _youtube_cookie_args(yt_cookies, cookies_from_browser)
         else:
             cookie_args = ["--cookies-from-browser", cookies_from_browser] if cookies_from_browser else []
-        cmd = [yt_dlp, *cookie_args, *YT_DLP_BASE_ARGS, "--socket-timeout", "30", "--remux-video", "mp4",
+        cmd = [*yt_dlp_command(yt_dlp), *cookie_args, *YT_DLP_BASE_ARGS, "--socket-timeout", "30", "--remux-video", "mp4",
                "-P", str(cache), "-o", "%(id)s.%(ext)s", f"https://youtu.be/{youtube_id}"]
         try:
             subprocess.run(cmd, timeout=7200)
@@ -1384,7 +1419,7 @@ def download_course(
             failed_count = len(course_stats.youtube.failed)
             # Without ffmpeg every video fails the same way; neither a newer
             # yt-dlp nor a YouTube login can fix that, so don't offer them.
-            retryable = shutil.which("ffmpeg") is not None
+            retryable = _tool_usable("ffmpeg")
             if failed_count > 0 and retryable and yt_dlp_update is None:
                 from .update_check import confirm_yt_dlp_update, update_yt_dlp
                 ok = False
@@ -1468,7 +1503,7 @@ def download_course(
             # Cool-videos that are really private / members-only YouTube uploads
             # get the same browser-login retry as the YouTube stage.
             youtube_backed = course_stats.cool_videos.youtube_retry
-            if youtube_backed and shutil.which("ffmpeg") is not None and (
+            if youtube_backed and _tool_usable("ffmpeg") and (
                     youtube_login_consent or maybe_retry_youtube_with_login(yt_cookies, len(youtube_backed))):
                 recovered = retry_youtube_backed_cool_videos(
                     plan, course_stats.cool_videos, yt_dlp=yt_dlp, yt_cookies=yt_cookies,

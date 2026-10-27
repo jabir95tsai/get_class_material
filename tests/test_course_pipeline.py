@@ -408,6 +408,28 @@ class MaybeRetryYoutubeWithLoginTests(unittest.TestCase):
                         f"failure count not in prompt; got prompts: {captured}")
 
 
+class BlockedByPolicyTests(unittest.TestCase):
+    def _run_with(self, exc: BaseException | None) -> bool:
+        with (
+            mock.patch.object(course_pipeline.shutil, "which", return_value="C:/bin/ffmpeg.exe"),
+            mock.patch.object(course_pipeline.subprocess, "run", side_effect=exc),
+        ):
+            return course_pipeline._blocked_by_policy("ffmpeg")
+
+    def test_winerror_4551_is_blocked(self) -> None:
+        blocked = OSError(0, "blocked", None, 4551)  # 4th arg sets .winerror on Windows
+        blocked.winerror = 4551
+        self.assertTrue(self._run_with(blocked))
+
+    def test_other_os_errors_are_not_blocked(self) -> None:
+        self.assertFalse(self._run_with(FileNotFoundError()))
+
+    def test_missing_tool_is_not_blocked(self) -> None:
+        with mock.patch.object(course_pipeline.shutil, "which", return_value=None):
+            self.assertFalse(course_pipeline._blocked_by_policy("ffmpeg"))
+            self.assertFalse(course_pipeline._tool_usable("ffmpeg"))
+
+
 class YoutubeCookieArgsTests(unittest.TestCase):
     def test_real_cookies_file_wins(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

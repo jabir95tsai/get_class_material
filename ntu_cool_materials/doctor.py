@@ -50,8 +50,23 @@ def _run(cmd: list[str], timeout: int = 5) -> tuple[int, str]:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         out = (r.stdout or r.stderr or "").strip().splitlines()
         return r.returncode, out[0] if out else ""
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired) as exc:  # OSError incl. WinError 4551 (blocked exe)
         return -1, str(exc)
+
+
+def _blocked(code: int, line: str) -> bool:
+    """`_run` failed because Windows Application Control (WinError 4551) refused the exe."""
+    return code == -1 and "4551" in line
+
+
+def _blocked_check(name: str) -> CheckResult:
+    # Optional and no auto_install: reinstalling can't help, the policy must allow the file.
+    return CheckResult(
+        name=name, ok=False, optional=True,
+        detail=t("被 Windows 應用程式控制原則封鎖", "blocked by Windows Application Control"),
+        fix_command=t("請向電腦管理員申請放行此程式(重新安裝無效)",
+                      "ask your administrator to allow it (reinstalling won't help)"),
+    )
 
 
 def _platform_install_hint(*, mac: str, linux: str, windows: str) -> str:
@@ -342,10 +357,10 @@ def check_playwright_chromium() -> CheckResult:
 
 
 def check_yt_dlp() -> CheckResult:
-    from .update_check import resolve_yt_dlp
+    from .update_check import resolve_yt_dlp, yt_dlp_command
     executable = resolve_yt_dlp()
     if executable:
-        code, line = _run([executable, "--version"])
+        code, line = _run([*yt_dlp_command(executable), "--version"])
         if code == 0:
             ver = line.strip()
             from .update_check import yt_dlp_version_age_days
@@ -381,6 +396,8 @@ def check_yt_dlp() -> CheckResult:
 def check_node() -> CheckResult:
     if _has("node"):
         code, line = _run(["node", "--version"])
+        if _blocked(code, line):
+            return _blocked_check("Node.js (下載 YouTube 影片用)")
         # Node is optional in *both* branches: on Windows `shutil.which` can
         # resolve the WindowsApps execution-alias stub (a 0-byte launcher for
         # the Microsoft Store), so `node --version` exits non-zero even though
@@ -415,6 +432,8 @@ def check_node() -> CheckResult:
 def check_ffmpeg() -> CheckResult:
     if _has("ffmpeg"):
         code, line = _run(["ffmpeg", "-version"])
+        if _blocked(code, line):
+            return _blocked_check("ffmpeg (下載 YouTube 影片用)")
         # Optional in both branches — same WindowsApps-stub reasoning as Node.
         return CheckResult(
             name="ffmpeg (下載 YouTube 影片用)",
@@ -574,8 +593,8 @@ def run_doctor(
         _newer = check_for_update(__version__, cache_path=_secrets_dir() / "update_check.json")
         if _newer:
             print(t(
-                f"  💡 有新版本 {_newer},更新: pip install --upgrade get-class-material",
-                f"  💡 Update available: {_newer} — pip install --upgrade get-class-material",
+                f"  💡 有新版本 {_newer},更新: python -m pip install --upgrade get-class-material",
+                f"  💡 Update available: {_newer} — python -m pip install --upgrade get-class-material",
             ))
     except Exception:
         pass

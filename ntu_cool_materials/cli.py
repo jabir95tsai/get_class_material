@@ -669,9 +669,9 @@ def _cmd_pick(base_url: str, args: argparse.Namespace) -> int:
     if _newer:
         print(t(
             f"\n💡 有新版本 {_newer}(你目前 {_version_string()})。"
-            f"更新指令: pip install --upgrade get-class-material\n",
+            f"更新指令: python -m pip install --upgrade get-class-material\n",
             f"\n💡 Update available: {_newer} (you have {_version_string()}). "
-            f"Run: pip install --upgrade get-class-material\n",
+            f"Run: python -m pip install --upgrade get-class-material\n",
         ))
 
     browser: BrowserSession | None = None

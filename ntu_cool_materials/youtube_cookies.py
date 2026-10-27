@@ -56,7 +56,7 @@ def export_youtube_cookies(
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
         raise YouTubeCookieError(
-            "Playwright is not installed. Run: pip install playwright && python -m playwright install chromium"
+            "Playwright is not installed. Run: python -m pip install playwright && python -m playwright install chromium"
         ) from exc
 
     profile_dir.parent.mkdir(parents=True, exist_ok=True)

@@ -16,7 +16,7 @@ from .i18n import t
 from .storage import atomic_write_text
 
 SPREADSHEET_TYPES = {".xlsx", ".xls"}
-INSTALL_HINT = 'pip install "get-class-material[excel]"'
+INSTALL_HINT = 'python -m pip install "get-class-material[excel]"'
 
 
 @dataclass

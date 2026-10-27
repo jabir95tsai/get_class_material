@@ -183,6 +183,10 @@ class PipelineTests(unittest.TestCase):
         self.output = contextlib.redirect_stdout(self.stdout)
         self.output.__enter__()
         self.addCleanup(self.output.__exit__, None, None, None)
+        # The policy-block probe would otherwise consume the mocked subprocess.run.
+        patcher = patch.object(p, "_blocked_by_policy", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.client = Mock()
         self.client.headers = {}
         self.client.base_url = "https://cool.ntu.edu.tw"

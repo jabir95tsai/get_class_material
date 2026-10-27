@@ -23,6 +23,16 @@ class IsNewerTests(unittest.TestCase):
         self.assertTrue(is_newer("0.2.18", "0.2.17+local"))
 
 
+class YtDlpCommandTests(unittest.TestCase):
+    def test_default_runs_as_module_not_launcher_exe(self) -> None:
+        # The pip launcher yt-dlp.exe can be blocked by Application Control (WinError 4551).
+        cmd = update_check.yt_dlp_command("C:/py/Scripts/yt-dlp.exe")
+        self.assertEqual(cmd[1:], ["-m", "yt_dlp"])
+
+    def test_custom_executable_is_respected(self) -> None:
+        self.assertEqual(update_check.yt_dlp_command("/opt/my-ytdl"), ["/opt/my-ytdl"])
+
+
 class CheckForUpdateTests(unittest.TestCase):
     def _cache(self, temp: str) -> Path:
         return Path(temp) / "update_check.json"

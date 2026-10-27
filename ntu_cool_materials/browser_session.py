@@ -60,7 +60,7 @@ def refresh_headers_file(
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
         raise BrowserSessionError(
-            "Playwright is not installed. Run: pip install playwright && python -m playwright install chromium"
+            "Playwright is not installed. Run: python -m pip install playwright && python -m playwright install chromium"
         ) from exc
 
     base_url = base_url.rstrip("/")

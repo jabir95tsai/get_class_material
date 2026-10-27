@@ -473,7 +473,10 @@ def _mux_with_ffmpeg(
         str(output_path),
     ]
     print("ffmpeg: muxing video + audio")
-    completed = subprocess.run(command, capture_output=True, text=True)
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True)
+    except OSError as exc:  # e.g. WinError 4551: blocked by Windows Application Control
+        raise CoolVideoError(f"ffmpeg could not start: {exc}") from exc
     if completed.returncode != 0:
         stderr = completed.stderr.strip()
         hint = (

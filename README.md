@@ -13,13 +13,13 @@
 工具列搜尋 PowerShell 並開啟,輸入:
 
 ```powershell
-pip install get-class-material
+python -m pip install get-class-material
 ntu-cool-gcm
 ```
 更新到最新版,輸入:
 
 ```powershell
-pip install --upgrade get-class-material
+python -m pip install --upgrade get-class-material
 ```
 
 ## 📦 會下載什麼
@@ -90,7 +90,7 @@ python --version
 在 PowerShell 貼上:
 
 ```powershell
-pip install get-class-material
+python -m pip install get-class-material
 ```
 
 按 Enter,等它跑完(會看到一堆 `Collecting...`、`Downloading...`、`Installing...`)。最後看到 `Successfully installed ...` 就 OK。
@@ -341,10 +341,10 @@ ntu-cool-gcm --version
 工具每次啟動時也會**自動檢查有沒有新版**(一天最多查一次,離線就跳過,不會拖慢速度)。如果有新版會提醒你:
 
 ```text
-💡 有新版本 1.0.1(你目前 1.0.0)。更新指令: pip install --upgrade get-class-material
+💡 有新版本 1.0.1(你目前 1.0.0)。更新指令: python -m pip install --upgrade get-class-material
 ```
 
-照著跑那行 `pip install --upgrade get-class-material` 就更新好了。
+照著跑那行 `python -m pip install --upgrade get-class-material` 就更新好了。
 
 ### YouTube 不公開影片下載失敗
 
@@ -378,7 +378,7 @@ ntu-cool-gcm --version
 最簡單的用法:
 
 ```powershell
-pip install "get-class-material[notebooklm]"
+python -m pip install "get-class-material[notebooklm]"
 notebooklm login          # 第一次:在跳出的 Chrome 視窗登入 Google
 ntu-cool-gcm --notebooklm # 選課、下載,完成後直接匯入
 ```
@@ -511,7 +511,7 @@ API 模式使用**非官方 Google 個人版介面**，不是 Enterprise 官方 
 ### Q: 怎麼更新到最新版?
 
 ```powershell
-pip install --upgrade get-class-material
+python -m pip install --upgrade get-class-material
 ```
 
 已經是最新版的話它不會做任何事,隨時都可以放心跑。想確認自己現在哪一版,打 `ntu-cool-gcm --version`。
@@ -522,9 +522,19 @@ pip install --upgrade get-class-material
 
 **解法:** 重裝一次,這次記得勾那個選項。然後**關掉 PowerShell 重開**。
 
-### Q: 輸入 `pip install get-class-material` 顯示「找不到 pip」
+### Q: 輸入 `python -m pip install get-class-material` 顯示「找不到 pip」
 
 跟上一題一樣,通常是 Python 沒裝好。重裝 Python 並勾「Add Python to PATH」。
+
+### Q: 顯示「應用程式控制原則已封鎖此檔案」(WinError 4551)
+
+Windows 的 Smart App Control / 應用程式控制原則擋下了未簽章的執行檔(例如 `pip.exe`、`ntu-cool-gcm.exe`)。所以本文件一律用 `python -m pip` 安裝與更新;如果連 `ntu-cool-gcm` 也被擋,改用:
+
+```powershell
+python -X utf8 -m ntu_cool_materials pick
+```
+
+若是 `ffmpeg.exe` 或 `node.exe` 被擋,程式會提示並跳過 YouTube 階段(或畫質受限),其餘檔案照常下載;要完整功能需請電腦管理員放行該檔案。請不要為此關閉 Smart App Control(關掉後無法再開回來)。
 
 ### Q: PowerShell 顯示「無法載入指令碼,因為這個系統上已停用指令碼執行」
 
